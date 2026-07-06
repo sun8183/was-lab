@@ -55,7 +55,7 @@ public class RequestDispatcher {
         if (result.status() == HttpStatus.NOT_MODIFIED) {
             responseWriter.writeNotModified(out, result.etag(), keepAlive);
         } else {
-            responseWriter.writeResponse(out, HttpStatus.OK, result.contentType(), result.body(), keepAlive, result.etag());
+            responseWriter.writeResponse(out, HttpStatus.OK, result.contentType(), result.filePath(), result.size(), keepAlive, result.etag());
         }
         return result.status();
     }

@@ -6,7 +6,6 @@ import com.example.was.http.HttpStatus;
 import com.example.was.security.ForbiddenRule;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -32,8 +31,8 @@ public class StaticFileHandler {
             return ServeResult.notModified(etag);
         }
 
-        byte[] body = Files.readAllBytes(resolved);
-        return ServeResult.ok(contentTypeFor(resolved), body, etag);
+        long size = Files.size(resolved);
+        return ServeResult.ok(contentTypeFor(resolved), resolved, size, etag);
     }
 
     private void checkAccess(Path httpRoot, Path resolved) {
@@ -75,12 +74,12 @@ public class StaticFileHandler {
         };
     }
 
-    public record ServeResult(HttpStatus status, String contentType, byte[] body, String etag) {
-        static ServeResult ok(String contentType, byte[] body, String etag) {
-            return new ServeResult(HttpStatus.OK, contentType, body, etag);
+    public record ServeResult(HttpStatus status, String contentType, Path filePath, long size, String etag) {
+        static ServeResult ok(String contentType, Path filePath, long size, String etag) {
+            return new ServeResult(HttpStatus.OK, contentType, filePath, size, etag);
         }
         static ServeResult notModified(String etag) {
-            return new ServeResult(HttpStatus.NOT_MODIFIED, null, null, etag);
+            return new ServeResult(HttpStatus.NOT_MODIFIED, null, null, 0, etag);
         }
     }
 
