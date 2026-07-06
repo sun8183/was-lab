@@ -44,7 +44,8 @@ public class DirectClassServletMapper implements ServletMapper {
                     .getDeclaredConstructor().newInstance();
             servlet.init();
             return servlet;
-        } catch (ReflectiveOperationException e) {
+        } catch (ReflectiveOperationException | NoClassDefFoundError e) {
+            // NoClassDefFoundError 는 Error 상속이라 별도로 잡아야 위로 전파되지 않는다.
             System.err.println("Cannot create servlet for class " + e);
             throw new RuntimeException(e);
         }
