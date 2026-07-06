@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>HTTP/1.1 WAS 구현 시스템 구성도</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+    background: #f5f7fa;
+    padding: 32px;
+  }
+  .page {
+    max-width: 1400px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    padding: 40px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 22px;
+    font-weight: 700;
+    color: #1a2233;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 13px;
+    color: #6b7280;
+    margin-bottom: 36px;
+  }
+  svg text { font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>HTTP/1.1 WAS 구현 시스템 구성도</h1>
+  <p class="subtitle">구현된 컴포넌트 기반 전체 아키텍처 (Java · was-core 모듈)</p>
+
+  <svg viewBox="0 0 1320 920" xmlns="http://www.w3.org/2000/svg" width="100%" style="display:block;">
+    <defs>
+      <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
+      </marker>
+      <marker id="arr-red" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#ef4444"/>
+      </marker>
+      <marker id="arr-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#10b981"/>
+      </marker>
+      <marker id="arr-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#3b82f6"/>
+      </marker>
+    </defs>
+
+    <!-- ── 배경 영역 ── -->
+    <!-- WAS 영역 -->
+    <rect x="300" y="30" width="760" height="860" rx="14" fill="#f0f4ff" stroke="#c7d2fe" stroke-width="1.5"/>
+    <text x="680" y="56" text-anchor="middle" font-size="13" font-weight="700" fill="#4338ca">WAS (was-core · Java)</text>
+
+    <!-- 요청 흐름 영역 (왼쪽) -->
+    <rect x="10" y="30" width="200" height="860" rx="14" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+    <text x="110" y="56" text-anchor="middle" font-size="12" font-weight="700" fill="#475569">HTTP/1.1 요청 흐름</text>
+
+    <!-- 구현 특징 영역 (오른쪽) -->
+    <rect x="1090" y="30" width="220" height="860" rx="14" fill="#fffbeb" stroke="#fde68a" stroke-width="1.5"/>
+    <text x="1200" y="56" text-anchor="middle" font-size="12" font-weight="700" fill="#92400e">구현 특징 &amp; 설계 결정</text>
+
+    <!-- ══════════════════════════════════════════
+         왼쪽: 요청 흐름 단계
+    ══════════════════════════════════════════ -->
+
+    <!-- Step 1 -->
+    <circle cx="40" cy="100" r="12" fill="#3b82f6"/>
+    <text x="40" y="104" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">1</text>
+    <text x="62" y="97" font-size="11" fill="#1e293b" font-weight="600">클라이언트 연결</text>
+    <text x="62" y="110" font-size="10" fill="#64748b">TCP 3-way handshake</text>
+
+    <!-- Step 2 -->
+    <circle cx="40" cy="175" r="12" fill="#3b82f6"/>
+    <text x="40" y="179" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">2</text>
+    <text x="62" y="172" font-size="11" fill="#1e293b" font-weight="600">요청 전송</text>
+    <text x="62" y="185" font-size="10" fill="#64748b">Request Line + Headers</text>
+
+    <!-- Step 3 -->
+    <circle cx="40" cy="270" r="12" fill="#3b82f6"/>
+    <text x="40" y="274" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">3</text>
+    <text x="62" y="267" font-size="11" fill="#1e293b" font-weight="600">요청 파싱</text>
+    <text x="62" y="280" font-size="10" fill="#64748b">method, path, version</text>
+    <text x="62" y="292" font-size="10" fill="#64748b">headers 파싱</text>
+
+    <!-- Step 4 -->
+    <circle cx="40" cy="390" r="12" fill="#3b82f6"/>
+    <text x="40" y="394" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">4</text>
+    <text x="62" y="387" font-size="11" fill="#1e293b" font-weight="600">요청 디스패치</text>
+    <text x="62" y="400" font-size="10" fill="#64748b">URI 매핑 → Servlet</text>
+    <text x="62" y="412" font-size="10" fill="#64748b">또는 정적 파일</text>
+
+    <!-- Step 5 -->
+    <circle cx="40" cy="560" r="12" fill="#3b82f6"/>
+    <text x="40" y="564" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">5</text>
+    <text x="62" y="557" font-size="11" fill="#1e293b" font-weight="600">응답 생성</text>
+    <text x="62" y="570" font-size="10" fill="#64748b">Status + Headers + Body</text>
+
+    <!-- Step 6 -->
+    <circle cx="40" cy="700" r="12" fill="#3b82f6"/>
+    <text x="40" y="704" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">6</text>
+    <text x="62" y="697" font-size="11" fill="#1e293b" font-weight="600">응답 전송</text>
+    <text x="62" y="710" font-size="10" fill="#64748b">OutputStream → Client</text>
+
+    <!-- Step 7 -->
+    <circle cx="40" cy="800" r="12" fill="#3b82f6"/>
+    <text x="40" y="804" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">7</text>
+    <text x="62" y="797" font-size="11" fill="#1e293b" font-weight="600">커넥션 유지/종료</text>
+    <text x="62" y="810" font-size="10" fill="#64748b">keep-alive or close</text>
+
+    <!-- 단계 연결선 (왼쪽) -->
+    <line x1="40" y1="112" x2="40" y2="163" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <line x1="40" y1="187" x2="40" y2="258" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <line x1="40" y1="306" x2="40" y2="378" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <line x1="40" y1="424" x2="40" y2="548" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <line x1="40" y1="572" x2="40" y2="688" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <line x1="40" y1="712" x2="40" y2="788" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+    <!-- ══════════════════════════════════════════
+         중앙: WAS 컴포넌트
+    ══════════════════════════════════════════ -->
+
+    <!-- [A] Client -->
+    <rect x="565" y="66" width="230" height="52" rx="8" fill="#1e40af" stroke="#1e3a8a" stroke-width="1.5"/>
+    <text x="680" y="87" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">클라이언트 (Client)</text>
+    <text x="680" y="103" text-anchor="middle" font-size="11" fill="#bfdbfe">TCP Socket 연결 요청</text>
+
+    <!-- Client → WebServer -->
+    <line x1="680" y1="118" x2="680" y2="148" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+    <text x="690" y="138" font-size="10" fill="#64748b">TCP connect :8080</text>
+
+    <!-- [B] WebServer / ServerSocket -->
+    <rect x="320" y="148" width="720" height="68" rx="8" fill="#1d4ed8" stroke="#1e40af" stroke-width="1.5"/>
+    <text x="680" y="171" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">WebServer  ·  ServerSocket</text>
+    <text x="680" y="188" text-anchor="middle" font-size="11" fill="#bfdbfe">acceptLoop()  ·  Bind :8080  ·  ShutdownHook</text>
+    <text x="450" y="207" text-anchor="middle" font-size="10" fill="#93c5fd">ThreadPoolExecutor (core/max/queue from config.json)</text>
+    <text x="830" y="207" text-anchor="middle" font-size="10" fill="#93c5fd">soTimeout = keepAliveTimeoutSeconds × 1000</text>
+
+    <!-- WebServer → ThreadPool -->
+    <line x1="565" y1="216" x2="565" y2="248" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- WebServer → 503 (queue full) -->
+    <line x1="790" y1="216" x2="790" y2="248" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr-red)"/>
+    <text x="800" y="236" font-size="10" fill="#ef4444">큐 초과 / shutdown</text>
+
+    <!-- [C] ThreadPoolExecutor + Queue -->
+    <rect x="320" y="248" width="420" height="56" rx="8" fill="#0369a1" stroke="#0284c7" stroke-width="1.5"/>
+    <text x="530" y="270" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">ThreadPoolExecutor</text>
+    <text x="530" y="287" text-anchor="middle" font-size="11" fill="#bae6fd">Worker Thread Pool  +  LinkedBlockingQueue</text>
+    <text x="530" y="300" text-anchor="middle" font-size="10" fill="#7dd3fc">prestartAllCoreThreads()  ·  AbortPolicy</text>
+
+    <!-- [C-2] 503 Box -->
+    <rect x="760" y="248" width="210" height="56" rx="8" fill="#fef2f2" stroke="#ef4444" stroke-width="2"/>
+    <text x="865" y="272" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">503 Service Unavailable</text>
+    <text x="865" y="289" text-anchor="middle" font-size="10" fill="#ef4444">큐 포화 또는 graceful shutdown</text>
+    <text x="865" y="302" text-anchor="middle" font-size="10" fill="#ef4444">중 수신된 신규 요청</text>
+
+    <!-- ThreadPool → ConnectionHandler -->
+    <line x1="530" y1="304" x2="530" y2="338" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- [D] ConnectionHandler -->
+    <rect x="320" y="338" width="420" height="72" rx="8" fill="#0f766e" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="530" y="360" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">ConnectionHandler  (Runnable)</text>
+    <text x="530" y="376" text-anchor="middle" font-size="11" fill="#99f6e4">Keep-Alive 루프  ·  handleRequest()</text>
+    <text x="530" y="392" text-anchor="middle" font-size="10" fill="#5eead4">Connection: close → keepAlive=false → 루프 종료</text>
+    <text x="530" y="404" text-anchor="middle" font-size="10" fill="#5eead4">SocketTimeoutException → 연결 종료</text>
+
+    <!-- ConnectionHandler → HttpRequestParser -->
+    <line x1="530" y1="410" x2="530" y2="442" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- [E] HttpRequestParser -->
+    <rect x="320" y="442" width="420" height="56" rx="8" fill="#065f46" stroke="#059669" stroke-width="1.5"/>
+    <text x="530" y="464" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">HttpRequestParser</text>
+    <text x="530" y="480" text-anchor="middle" font-size="11" fill="#6ee7b7">parse() → HttpRequest(method, path, version, headers)</text>
+    <text x="530" y="494" text-anchor="middle" font-size="10" fill="#34d399">IllegalArgumentException → 400 Bad Request</text>
+
+    <!-- HttpRequestParser → RequestDispatcher -->
+    <line x1="530" y1="498" x2="530" y2="530" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- [F] RequestDispatcher -->
+    <rect x="320" y="530" width="420" height="72" rx="8" fill="#7c3aed" stroke="#6d28d9" stroke-width="1.5"/>
+    <text x="530" y="552" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">RequestDispatcher</text>
+    <text x="530" y="568" text-anchor="middle" font-size="11" fill="#ddd6fe">dispatch(out, request, keepAlive)</text>
+    <text x="530" y="584" text-anchor="middle" font-size="10" fill="#c4b5fd">① VirtualHostConfig 해석 (Host 헤더 → docRoot, errorPages)</text>
+    <text x="530" y="597" text-anchor="middle" font-size="10" fill="#c4b5fd">② ServletMapper.resolve() → Servlet or Static 분기</text>
+
+    <!-- RequestDispatcher → Servlet path -->
+    <line x1="410" y1="602" x2="410" y2="640" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+    <text x="360" y="626" font-size="10" fill="#64748b">servlet</text>
+
+    <!-- RequestDispatcher → Static path -->
+    <line x1="650" y1="602" x2="760" y2="640" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+    <text x="680" y="630" font-size="10" fill="#64748b">static</text>
+
+    <!-- [G] DirectClassServletMapper + SimpleServlet -->
+    <rect x="320" y="640" width="280" height="80" rx="8" fill="#b45309" stroke="#d97706" stroke-width="1.5"/>
+    <text x="460" y="662" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">DirectClassServletMapper</text>
+    <text x="460" y="677" text-anchor="middle" font-size="10" fill="#fde68a">path → className → Class.forName()</text>
+    <text x="460" y="691" text-anchor="middle" font-size="10" fill="#fde68a">ConcurrentHashMap 캐시</text>
+    <text x="460" y="706" text-anchor="middle" font-size="10" fill="#fde68a">init() / service(req,res) / destroy()</text>
+
+    <!-- [H] StaticFileHandler -->
+    <rect x="620" y="640" width="420" height="140" rx="8" fill="#be185d" stroke="#db2777" stroke-width="1.5"/>
+    <text x="830" y="663" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">StaticFileHandler</text>
+    <text x="830" y="678" text-anchor="middle" font-size="10" fill="#fbcfe8">resolve(vhost, request)</text>
+
+    <!-- Security sub-box -->
+    <rect x="630" y="686" width="185" height="82" rx="6" fill="#9f1239" stroke="#f43f5e" stroke-width="1"/>
+    <text x="722" y="703" text-anchor="middle" font-size="10" font-weight="700" fill="#fda4af">Security Rules</text>
+    <text x="722" y="717" text-anchor="middle" font-size="9.5" fill="#fecdd3">PathTraversalRule</text>
+    <text x="722" y="729" text-anchor="middle" font-size="9.5" fill="#fecdd3">BlockedExtensionRule</text>
+    <text x="722" y="742" text-anchor="middle" font-size="9.5" fill="#fecdd3">→ ForbiddenException</text>
+    <text x="722" y="755" text-anchor="middle" font-size="9.5" fill="#fecdd3">→ 403 Forbidden</text>
+
+    <!-- ETag sub-box -->
+    <rect x="825" y="686" width="205" height="82" rx="6" fill="#9f1239" stroke="#f43f5e" stroke-width="1"/>
+    <text x="927" y="703" text-anchor="middle" font-size="10" font-weight="700" fill="#fda4af">ETag / Cache</text>
+    <text x="927" y="717" text-anchor="middle" font-size="9.5" fill="#fecdd3">computeETag(lastModified+size)</text>
+    <text x="927" y="729" text-anchor="middle" font-size="9.5" fill="#fecdd3">If-None-Match 헤더 비교</text>
+    <text x="927" y="742" text-anchor="middle" font-size="9.5" fill="#fecdd3">일치 → 304 Not Modified</text>
+    <text x="927" y="755" text-anchor="middle" font-size="9.5" fill="#fecdd3">불일치 → 200 OK + body</text>
+
+    <!-- Servlet → HttpResponseWriter -->
+    <line x1="460" y1="720" x2="460" y2="800" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- Static → HttpResponseWriter -->
+    <line x1="760" y1="780" x2="680" y2="800" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- [I] HttpResponseWriter -->
+    <rect x="320" y="800" width="720" height="72" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+    <text x="680" y="823" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">HttpResponseWriter</text>
+    <text x="680" y="840" text-anchor="middle" font-size="11" fill="#94a3b8">writeResponse()  writeNotModified()  writeErrorResponse()</text>
+    <text x="680" y="856" text-anchor="middle" font-size="10" fill="#64748b">Status Line · Content-Type · Content-Length · Connection · Keep-Alive · ETag · Cache-Control</text>
+    <text x="680" y="868" text-anchor="middle" font-size="10" fill="#64748b">VirtualHost 커스텀 에러 페이지 지원 (errorPages 설정)</text>
+
+    <!-- HttpResponseWriter → Client (응답) -->
+    <line x1="680" y1="872" x2="680" y2="900" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+    <text x="690" y="893" font-size="10" fill="#64748b">OutputStream flush</text>
+
+    <!-- keepAlive 루프백 화살표 -->
+    <path d="M310,410 Q265,600 310,800" stroke="#10b981" stroke-width="1.5" fill="none" stroke-dasharray="6,3" marker-end="url(#arr-green)"/>
+    <text x="238" y="600" font-size="10" fill="#10b981" transform="rotate(-90,238,600)">keep-alive → 루프 재실행</text>
+
+    <!-- ══════════════════════════════════════════
+         오른쪽: 구현 특징
+    ══════════════════════════════════════════ -->
+
+    <!-- 특징 카드들 -->
+    <!-- 1 -->
+    <rect x="1100" y="70" width="200" height="78" rx="7" fill="#fffbeb" stroke="#fbbf24" stroke-width="1"/>
+    <text x="1110" y="89" font-size="11" font-weight="700" fill="#92400e">🧵 스레드 풀</text>
+    <text x="1110" y="104" font-size="10" fill="#78350f">config.json으로</text>
+    <text x="1110" y="117" font-size="10" fill="#78350f">coreSize / maxSize /</text>
+    <text x="1110" y="130" font-size="10" fill="#78350f">queueSize 설정 가능</text>
+    <text x="1110" y="143" font-size="10" fill="#78350f">AbortPolicy → 503</text>
+
+    <!-- 2 -->
+    <rect x="1100" y="158" width="200" height="78" rx="7" fill="#fffbeb" stroke="#fbbf24" stroke-width="1"/>
+    <text x="1110" y="177" font-size="11" font-weight="700" fill="#92400e">🔁 Keep-Alive</text>
+    <text x="1110" y="192" font-size="10" fill="#78350f">ConnectionHandler</text>
+    <text x="1110" y="205" font-size="10" fill="#78350f">while 루프로 구현</text>
+    <text x="1110" y="218" font-size="10" fill="#78350f">soTimeout으로 유휴</text>
+    <text x="1110" y="231" font-size="10" fill="#78350f">연결 자동 종료</text>
+
+    <!-- 3 -->
+    <rect x="1100" y="246" width="200" height="78" rx="7" fill="#fffbeb" stroke="#fbbf24" stroke-width="1"/>
+    <text x="1110" y="265" font-size="11" font-weight="700" fill="#92400e">🛡 보안 규칙</text>
+    <text x="1110" y="280" font-size="10" fill="#78350f">PathTraversalRule</text>
+    <text x="1110" y="293" font-size="10" fill="#78350f">BlockedExtensionRule</text>
+    <text x="1110" y="306" font-size="10" fill="#78350f">ForbiddenRule 인터페이스</text>
+    <text x="1110" y="319" font-size="10" fill="#78350f">→ 전략 패턴 확장 가능</text>
+
+    <!-- 4 -->
+    <rect x="1100" y="334" width="200" height="78" rx="7" fill="#fffbeb" stroke="#fbbf24" stroke-width="1"/>
+    <text x="1110" y="353" font-size="11" font-weight="700" fill="#92400e">🏠 VirtualHost</text>
+    <text x="1110" y="368" font-size="10" fill="#78350f">Host 헤더로 가상호스트</text>
+    <text x="1110" y="381" font-size="10" fill="#78350f">별 docRoot 분리</text>
+    <text x="1110" y="394" font-size="10" fill="#78350f">상태코드별 커스텀</text>
+    <text x="1110" y="407" font-size="10" fill="#78350f">에러 페이지 설정</text>
+
+    <!-- 5 -->
+    <rect x="1100" y="422" width="200" height="78" rx="7" fill="#fffbeb" stroke="#fbbf24" stroke-width="1"/>
+    <text x="1110" y="441" font-size="11" font-weight="700" fill="#92400e">🏷 ETag 캐싱</text>
+    <text x="1110" y="456" font-size="10" fill="#78350f">lastModified + size</text>
+    <text x="1110" y="469" font-size="10" fill="#78350f">해시로 ETag 생성</text>
+    <text x="1110" y="482" font-size="10" fill="#78350f">If-None-Match 검증</text>
+    <text x="1110" y="495" font-size="10" fill="#78350f">→ 304 Not Modified</text>
+
+    <!-- 6 -->
+    <rect x="1100" y="510" width="200" height="78" rx="7" fill="#fffbeb" stroke="#fbbf24" stroke-width="1"/>
+    <text x="1110" y="529" font-size="11" font-weight="700" fill="#92400e">🔌 Servlet 시스템</text>
+    <text x="1110" y="544" font-size="10" fill="#78350f">경로 → 클래스명 변환</text>
+    <text x="1110" y="557" font-size="10" fill="#78350f">Class.forName() 동적 로딩</text>
+    <text x="1110" y="570" font-size="10" fill="#78350f">ConcurrentHashMap 캐시</text>
+    <text x="1110" y="583" font-size="10" fill="#78350f">init/service/destroy 생명주기</text>
+
+    <!-- 7 -->
+    <rect x="1100" y="598" width="200" height="78" rx="7" fill="#fffbeb" stroke="#fbbf24" stroke-width="1"/>
+    <text x="1110" y="617" font-size="11" font-weight="700" fill="#92400e">📝 Encoding</text>
+    <text x="1110" y="632" font-size="10" fill="#78350f">요청 파싱: UTF-8</text>
+    <text x="1110" y="645" font-size="10" fill="#78350f">응답 헤더: charset=UTF-8</text>
+    <text x="1110" y="658" font-size="10" fill="#78350f">Content-Type별 자동</text>
+    <text x="1110" y="671" font-size="10" fill="#78350f">MIME 타입 매핑</text>
+
+    <!-- 8 -->
+    <rect x="1100" y="686" width="200" height="78" rx="7" fill="#fffbeb" stroke="#fbbf24" stroke-width="1"/>
+    <text x="1110" y="705" font-size="11" font-weight="700" fill="#92400e">🔒 Graceful Shutdown</text>
+    <text x="1110" y="720" font-size="10" fill="#78350f">ShutdownHook 등록</text>
+    <text x="1110" y="733" font-size="10" fill="#78350f">진행 중 요청 완료 대기</text>
+    <text x="1110" y="746" font-size="10" fill="#78350f">신규 수신 → 503 반환</text>
+    <text x="1110" y="759" font-size="10" fill="#78350f">timeout 후 강제 종료</text>
+
+    <!-- 9 미구현 표시 -->
+    <rect x="1100" y="774" width="200" height="90" rx="7" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
+    <text x="1110" y="793" font-size="11" font-weight="700" fill="#94a3b8">❌ 미구현</text>
+    <text x="1110" y="808" font-size="10" fill="#94a3b8">Filter Chain (doFilter)</text>
+    <text x="1110" y="821" font-size="10" fill="#94a3b8">Session Store</text>
+    <text x="1110" y="834" font-size="10" fill="#94a3b8">View / JSP 렌더링</text>
+    <text x="1110" y="847" font-size="10" fill="#94a3b8">TLS / HTTPS</text>
+    <text x="1110" y="860" font-size="10" fill="#94a3b8">요청 Body 파싱</text>
+
+    <!-- 단계 → WAS 연결선 (수평) -->
+    <line x1="210" y1="100" x2="565" y2="82" stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr-blue)"/>
+    <line x1="210" y1="175" x2="320" y2="162" stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr-blue)"/>
+    <line x1="210" y1="278" x2="320" y2="470" stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr-blue)"/>
+    <line x1="210" y1="395" x2="320" y2="566" stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr-blue)"/>
+    <line x1="210" y1="560" x2="320" y2="836" stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr-blue)"/>
+    <line x1="210" y1="700" x2="320" y2="850" stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr-blue)"/>
+    <line x1="210" y1="800" x2="310" y2="800" stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr-blue)"/>
+
+  </svg>
+</div>
+</body>
+</html>

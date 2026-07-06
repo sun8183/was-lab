@@ -1,0 +1,32 @@
+{
+  "port": 8080,
+  "keepAliveTimeoutSeconds": 20,
+  "shutdownTimeoutSeconds": 30,
+  "blockedExtensions": [".exe"],
+  "threadPool": {
+    "coreSize": 50,
+    "maxSize": 200,
+    "keepAliveSeconds": 60,
+    "queueSize": 100
+  },
+  "virtualHosts": [
+    {
+      "host": "a.com",
+      "httpRoot": "./webapp/a",
+      "errorPages": {
+        "403": "403.html",
+        "404": "404.html",
+        "500": "500.html"
+      }
+    },
+    {
+      "host": "b.com",
+      "httpRoot": "./webapp/b",
+      "errorPages": {
+        "403": "403.html",
+        "404": "404.html",
+        "500": "500.html"
+      }
+    }
+  ]
+}
