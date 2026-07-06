@@ -38,7 +38,7 @@ flowchart TD
     D -->|accept 반복| D
 ```
 
-스레드는 `ThreadPoolExecutor`로 재사용하지만, 연결 단위 처리 객체(`ConnectionHandler`)는 매 연결마다 새로 만든다. 즉 스레드 자체는 풀링되어 있어도 커넥션 하나가 스레드 하나를 끝까지 붙잡는 thread-per-connection 모델이라, 동시 커넥션 수가 `maxSize`(200)를 넘고 큐(100)까지 차면 그 이후 요청은 스레드를 잡지도 못하고 바로 503이 나간다.
+스레드는 `ThreadPoolExecutor`로 재사용하지만, 연결 단위 처리 객체(`ConnectionHandler`)는 매 연결마다 새로 만든다. 즉 스레드 자체는 풀링되어 있어도 커넥션 하나가 스레드 하나를 끝까지 붙잡는 thread-per-connection 모델이다. 동시 커넥션이 늘면 먼저 큐(100)가 차오르고, 그래도 못 따라가면 스레드가 core(50)를 넘어 max(200)까지 늘어난다. max까지 다 쓰고 큐도 다시 꽉 차면, 그 이후 요청은 스레드도 큐도 못 잡고 바로 503이 나간다.
 
 ### 설정 (`config.json`)
 
