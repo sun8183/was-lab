@@ -7,6 +7,7 @@ import com.example.was.http.HttpStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -41,7 +42,7 @@ public class ConnectionHandler implements Runnable {
         String clientIp = socket.getInetAddress().getHostAddress();
         try (socket;
              BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), CHARSET));
-             OutputStream out = socket.getOutputStream()) {
+             OutputStream out = new BufferedOutputStream(socket.getOutputStream())) {
 
             while (handleRequest(reader, out, clientIp)) { /* keep-alive */ }
 

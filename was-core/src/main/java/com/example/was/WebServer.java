@@ -10,13 +10,13 @@ import com.example.was.servlet.ServletMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -40,7 +40,7 @@ public class WebServer {
         this.socketTimeoutMillis = keepAliveTimeoutSeconds * 1000;
         List<ForbiddenRule> rules = List.of(
                 new PathTraversalRule(),
-                new BlockedExtensionRule(Set.copyOf(config.blockedExtensions()))
+                new BlockedExtensionRule(config.blockedExtensions())
         );
         StaticFileHandler staticFileHandler = new StaticFileHandler(rules);
         this.responseWriter = new HttpResponseWriter(keepAliveTimeoutSeconds);
@@ -119,7 +119,7 @@ public class WebServer {
     }
 
     private void sendServiceUnavailable(Socket socket) {
-        try (socket; OutputStream out = socket.getOutputStream()) {
+        try (socket; OutputStream out = new BufferedOutputStream(socket.getOutputStream())) {
             responseWriter.writeResponse(out, HttpStatus.SERVICE_UNAVAILABLE,
                     "text/plain; charset=UTF-8",
                     HttpStatus.SERVICE_UNAVAILABLE.bodyBytes(StandardCharsets.UTF_8), false, null);
