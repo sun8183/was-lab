@@ -65,8 +65,8 @@ public class ConfigLoader {
         );
     }
 
-    private List<VirtualHostConfig> parseVirtualHosts(JsonNode root) {
-        List<VirtualHostConfig> virtualHosts = new ArrayList<>();
+    private Map<String, VirtualHostConfig> parseVirtualHosts(JsonNode root) {
+        Map<String, VirtualHostConfig> virtualHosts = new LinkedHashMap<>();
         for (JsonNode vhostNode : root.get("virtualHosts")) {
             String host = vhostNode.get("host").asText();
             String httpRoot = vhostNode.get("httpRoot").asText();
@@ -77,7 +77,7 @@ public class ConfigLoader {
                     errorPages.put(Integer.parseInt(entry.getKey()), entry.getValue().asText())
             );
 
-            virtualHosts.add(new VirtualHostConfig(host, httpRoot, errorPages));
+            virtualHosts.put(host.toLowerCase(), new VirtualHostConfig(host, httpRoot, errorPages));
         }
         return virtualHosts;
     }

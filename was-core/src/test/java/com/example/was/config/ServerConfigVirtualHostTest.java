@@ -2,6 +2,7 @@ package com.example.was.config;
 
 import org.junit.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -13,7 +14,11 @@ public class ServerConfigVirtualHostTest {
     private static final VirtualHostConfig VHOST_B = new VirtualHostConfig("b.com", "/var/www/b", Map.of());
 
     private ServerConfig config(VirtualHostConfig... hosts) {
-        return new ServerConfig(8080, 20, 30, List.of(), new ThreadPoolConfig(10, 200, 60, 100), List.of(hosts));
+        Map<String, VirtualHostConfig> virtualHosts = new LinkedHashMap<>();
+        for (VirtualHostConfig host : hosts) {
+            virtualHosts.put(host.host().toLowerCase(), host);
+        }
+        return new ServerConfig(8080, 20, 30, List.of(), new ThreadPoolConfig(10, 200, 60, 100), virtualHosts);
     }
 
     @Test

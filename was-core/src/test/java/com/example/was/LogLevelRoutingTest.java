@@ -53,7 +53,7 @@ public class LogLevelRoutingTest {
         VirtualHostConfig vhost = new VirtualHostConfig(
                 "localhost", tmp.getRoot().getAbsolutePath(), Map.of());
         config = new ServerConfig(serverSocket.getLocalPort(), 20, 30, List.of(".exe"),
-                new ThreadPoolConfig(10, 200, 60, 100), List.of(vhost));
+                new ThreadPoolConfig(10, 200, 60, 100), Map.of("localhost", vhost));
     }
 
     @After

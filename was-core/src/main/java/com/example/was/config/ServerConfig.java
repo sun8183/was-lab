@@ -1,11 +1,12 @@
 package com.example.was.config;
 
 import java.util.List;
+import java.util.Map;
 
 public record ServerConfig(int port, int keepAliveTimeoutSeconds, int shutdownTimeoutSeconds,
                            List<String> blockedExtensions,
                            ThreadPoolConfig threadPool,
-                           List<VirtualHostConfig> virtualHosts) {
+                           Map<String, VirtualHostConfig> virtualHosts) {
 
     /**
      * Resolves a virtual host by the raw Host header value (may include ":port").
@@ -13,11 +14,12 @@ public record ServerConfig(int port, int keepAliveTimeoutSeconds, int shutdownTi
      * mirroring Apache's default-vhost behavior.
      */
     public VirtualHostConfig resolveVirtualHost(String hostHeaderValue) {
-        String hostName = stripPort(hostHeaderValue);
-        return virtualHosts.stream()
-                .filter(vhost -> vhost.host().equalsIgnoreCase(hostName))
-                .findFirst()
-                .or(() -> virtualHosts.stream().findFirst())
+        String hostName = stripPort(hostHeaderValue).toLowerCase();
+        VirtualHostConfig matched = virtualHosts.get(hostName);
+        if (matched != null) {
+            return matched;
+        }
+        return virtualHosts.values().stream().findFirst()
                 .orElseThrow(() -> new IllegalStateException("no virtual hosts configured"));
     }
 
