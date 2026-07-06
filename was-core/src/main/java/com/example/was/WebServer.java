@@ -123,6 +123,8 @@ public class WebServer {
             responseWriter.writeResponse(out, HttpStatus.SERVICE_UNAVAILABLE,
                     "text/plain; charset=UTF-8",
                     HttpStatus.SERVICE_UNAVAILABLE.bodyBytes(StandardCharsets.UTF_8), false, null);
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+            // 503 응답을 쓰는 도중 클라이언트가 이미 연결을 끊었을 수 있으므로 무시한다.
+        }
     }
 }
