@@ -74,8 +74,8 @@ public class HttpResponseWriter {
             Path httpRoot = Path.of(vhost.httpRoot()).toAbsolutePath().normalize();
             Path errorPage = httpRoot.resolve(errorPageName).normalize();
             if (errorPage.startsWith(httpRoot) && Files.isRegularFile(errorPage)) {
-                byte[] body = Files.readAllBytes(errorPage);
-                writeResponse(out, status, TEXT_HTML, body, keepAlive, null);
+                long size = Files.size(errorPage);
+                writeResponse(out, status, TEXT_HTML, errorPage, size, keepAlive, null);
                 return;
             }
         }
