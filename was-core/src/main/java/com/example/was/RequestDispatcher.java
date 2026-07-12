@@ -8,6 +8,8 @@ import com.example.was.servlet.ServletMapper;
 import com.example.was.servlet.SimpleServlet;
 import com.example.was.servlet.SimpleServletRequest;
 import com.example.was.servlet.SimpleServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -17,6 +19,7 @@ import java.util.Optional;
 
 public class RequestDispatcher {
 
+    private static final Logger log = LoggerFactory.getLogger(RequestDispatcher.class);
     private static final Charset CHARSET = StandardCharsets.UTF_8;
     private static final String HDR_HOST = "Host";
 
@@ -47,6 +50,10 @@ public class RequestDispatcher {
         } catch (StaticFileHandler.NotFoundException e) {
             responseWriter.writeErrorResponse(out, vhost, HttpStatus.NOT_FOUND, keepAlive);
             return HttpStatus.NOT_FOUND;
+        } catch (RuntimeException e) {
+            log.error("unhandled exception while dispatching {} {}", request.method(), request.path(), e);
+            responseWriter.writeErrorResponse(out, vhost, HttpStatus.INTERNAL_SERVER_ERROR, keepAlive);
+            return HttpStatus.INTERNAL_SERVER_ERROR;
         }
     }
 
