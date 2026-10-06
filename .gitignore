@@ -3,3 +3,7 @@ target/
 *.class
 docs/
 logs/
+
+# 빌드 산출물: maven-shade-plugin 이 생성하는 축소 POM, antrun 이 루트로 복사하는 fat jar
+dependency-reduced-pom.xml
+was.jar
