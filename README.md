@@ -1,6 +1,6 @@
 # was-lab
 
-JDK 소켓 레벨부터 직접 구현한 Java Web Application Server. Servlet 유사 API, 가상호스트, 정적 파일 서빙, 스레드풀, graceful shutdown을 포함한다.
+JDK 소켓 레벨부터 직접 구현한 Java Web Application Server. HTTP/1.1 요청 파싱(GET/HEAD/POST, keep-alive), Servlet 유사 API, 가상호스트, 정적 파일 서빙, 스레드풀, graceful shutdown을 포함한다.
 
 ## 배경
 
@@ -27,10 +27,11 @@ flowchart TD
     E --> E1{"큐 포화?"}
     E1 -->|Yes| E2["503 즉시 반환<br/>(스레드 점유 안 함)"]
     E1 -->|No| F2["ConnectionHandler<br/>연결마다 새로 생성, 풀 스레드 1개 점유"]
-    F2 --> F["HttpRequestParser<br/>요청 파싱"]
+    F2 --> F["HttpRequestParser<br/>바이트 단위 파싱<br/>요청 라인 + 헤더 + Content-Length 바디"]
+    F -->|"형식 오류 / 바디 초과 / chunked"| F3["400 / 413 / 501 응답 후 연결 종료"]
     F --> G{"서블릿 경로?"}
     G -->|Yes| H["DirectClassServletMapper<br/>리플렉션 로딩"]
-    G -->|No| I["StaticFileHandler<br/>vhost httpRoot 파일 서빙"]
+    G -->|No| I["StaticFileHandler<br/>vhost httpRoot 파일 서빙<br/>GET/HEAD 외 메서드는 405"]
     H --> J["HttpResponseWriter<br/>BufferedOutputStream, flush 시 1회 전송"]
     I --> J
     J -->|"keep-alive, SO_TIMEOUT 내 재요청"| F
@@ -47,6 +48,7 @@ flowchart TD
   "port": 8080,
   "keepAliveTimeoutSeconds": 20,
   "shutdownTimeoutSeconds": 30,
+  "maxRequestBodyBytes": 1048576,
   "blockedExtensions": [".exe"],
   "threadPool": { "coreSize": 50, "maxSize": 200, "keepAliveSeconds": 60, "queueSize": 100 },
   "virtualHosts": [
@@ -58,8 +60,31 @@ flowchart TD
 - Host 헤더로 가상호스트를 매칭하고, 매칭 실패 시 설정 파일에 등록된 첫 번째 가상호스트로 폴백한다.
 - `blockedExtensions`에 등록된 확장자로 오는 요청은 403.
 - `httpRoot` 상위 디렉터리로 나가는 경로(path traversal)는 차단한다.
+- `maxRequestBodyBytes`를 넘는 `Content-Length`는 바디를 읽기 전에 413으로 거절한다(기본 1MB). 바디는 `byte[]`로 메모리에 올라가므로 최악의 경우 `threadPool.maxSize × maxRequestBodyBytes`(기본 200 × 1MB = 200MB)가 바디 버퍼로 쓰인다. 스레드 수를 늘릴 때는 이 값이 힙 안에 여유 있게 들어오는지 같이 확인해야 한다.
 
 ## 기능별 구현 내용
+
+**HTTP 요청 파싱**: 소켓 입력을 `BufferedInputStream` 하나로 받아 요청 라인/헤더/바디를 모두 바이트 단위로 읽는다.
+
+- 줄은 LF까지 읽고 앞의 CR을 제거한다(단독 LF도 허용). 헤더는 ISO-8859-1로 디코딩해 어떤 바이트도 손실되지 않게 한다.
+- 헤더 이름은 대소문자를 구분하지 않는다(`TreeMap(CASE_INSENSITIVE_ORDER)`).
+- 바디는 메서드와 무관하게 `Content-Length` 바이트만큼 `readNBytes()`로 읽는다. 헤더가 없으면 바디 길이 0.
+- 한 줄 8KB, 헤더 100개, 바디 `maxRequestBodyBytes`로 크기를 제한한다.
+- 파싱 실패는 `HttpParseException`이 응답할 상태 코드를 들고 올라오고, 요청 경계를 더 이상 신뢰할 수 없으므로 응답 후 연결을 닫는다.
+
+| 상황 | 응답 |
+|---|---|
+| `Content-Length` 상한 초과 | 413 (바디를 읽기 전에 거절) |
+| `Content-Length`가 숫자가 아님 / 음수 / 서로 다른 값으로 중복 | 400 |
+| `Content-Length`와 `Transfer-Encoding` 동시 존재 | 400 |
+| `Transfer-Encoding`(chunked 등) | 501 (미지원) |
+| 줄 길이/헤더 개수 초과, 헤더 이름에 공백, 콜론 없는 헤더 줄, 줄 중간의 단독 CR | 400 |
+
+**지원 메서드 (GET / HEAD / POST)**: 메서드 이름은 대소문자를 구분한다(`get`은 501).
+
+- **정적 파일**: GET, HEAD만 허용한다. 그 외 메서드는 405와 함께 `Allow: GET, HEAD` 헤더를 보낸다(RFC 9110상 405에는 `Allow`가 필수). 허용 메서드는 `EnumSet` 하나에서 정의해 실제 검사와 `Allow` 헤더 값이 어긋나지 않게 했다.
+- **HEAD**: GET과 같은 응답에서 바디만 뺀다. `Content-Length`는 GET이었을 때의 값을 그대로 보낸다. HEAD 요청이면 출력 스트림을 `HeadResponseOutputStream`(헤더 끝 `\r\n\r\n` 이후 바이트를 버림)으로 감싸서, 서블릿·에러 페이지 등 어떤 응답 경로에서도 바디가 나가지 않게 했다. keep-alive에서 HEAD 응답에 바디가 섞이면 클라이언트가 그 바이트를 다음 응답으로 읽어 연결이 깨지기 때문이다. 정적 파일은 바디를 버리더라도 파일을 끝까지 읽는 비용이 드므로 아예 헤더만 쓴다.
+- **POST**: 서블릿으로만 처리된다. 폼 데이터는 `getParameter()`로, 그 외 형식(JSON 등)은 `getBody()` 원본 바이트로 받는다.
 
 **가상호스트 매칭**: Host 헤더 문자열을 키로 하는 `Map`에서 조회한다(O(1)). 매칭되는 호스트가 없으면 설정 파일에 나열된 순서상 첫 번째 가상호스트로 폴백하는데, 이 순서 보장을 위해 내부적으로 `LinkedHashMap`을 쓴다.
 
@@ -69,10 +94,11 @@ flowchart TD
 
 **로깅**: logback `SizeAndTimeBasedRollingPolicy`로 일별 폴더(`logs/yyyy-MM-dd/`)에 로그를 분리하고, 파일당 10MB 초과 시 분할, 30일치 보관, 총 용량 1GB로 제한한다. 접근 로그는 HTTP 상태 코드에 따라 로그 레벨을 다르게 남긴다(5xx는 ERROR, 4xx는 WARN, 그 외는 INFO). 에러 발생 시에는 스택트레이스 전체를 남긴다.
 
-**서블릿 API**: `SimpleServlet` 인터페이스가 `init` → `service` → `destroy` 생명주기를 정의한다(`init`/`destroy`는 default 메서드라 필요할 때만 구현). `service`로 넘어오는 `ServletRequest.getParameter()`로 쿼리 파라미터를 읽고, `ServletResponse.getWriter()`로 응답 바디를 쓴다. `DirectClassServletMapper`가 요청 경로(`/ClassName`)를 그대로 클래스명으로 써서 `Class.forName()`으로 리플렉션 로딩한다. `CurrentTime` 서블릿이 실제 구현 예시.
+**서블릿 API**: `SimpleServlet` 인터페이스가 `init` → `service` → `destroy` 생명주기를 정의한다(`init`/`destroy`는 default 메서드라 필요할 때만 구현). `service`로 넘어오는 `ServletRequest`에서 `getMethod()`, `getParameter()`, `getHeader()`(대소문자 무시), `getBody()`(원본 바이트)를 읽고, `ServletResponse.getWriter()`로 응답 바디를 쓴다. `DirectClassServletMapper`가 요청 경로(`/ClassName`)를 그대로 클래스명으로 써서 `Class.forName()`으로 리플렉션 로딩한다. `CurrentTime` 서블릿이 실제 구현 예시.
 
 - **생명주기**: `init()`은 해당 서블릿으로 첫 요청이 들어올 때 1회(지연 초기화), `service()`는 요청마다, `destroy()`는 graceful shutdown 시 생성에 성공한 서블릿에 대해 1회 호출된다.
 - **싱글톤**: 클래스당 인스턴스 하나를 `ConcurrentHashMap`에 캐시해 재사용한다. `computeIfAbsent`로 동시 첫 요청에서도 생성/`init()`은 한 번만 일어난다. 여러 워커 스레드가 같은 인스턴스의 `service()`를 동시에 호출하므로, 서블릿에 상태 필드를 두면 동기화는 서블릿 구현 측 책임이다.
+- **파라미터**: 쿼리스트링은 메서드와 무관하게 항상 파싱한다. `POST` + `Content-Type: application/x-www-form-urlencoded`이면 바디도 파싱해 합치고, 같은 키가 양쪽에 있으면 쿼리스트링 값이 우선한다(서블릿 스펙, Tomcat 기본 동작과 같음). 바디 디코딩은 `Content-Type`의 `charset`을 따르고 없으면 UTF-8. `%zz`처럼 잘못 인코딩된 쌍은 500 대신 그 쌍만 무시한다. 폼이 아닌 바디의 해석(JSON 파싱 등)은 서블릿 구현의 몫이다.
 - **로딩 순서**: 로딩(`initialize=false`) → `SimpleServlet` 타입 체크 → (서블릿일 때만) 인스턴스 생성 시 클래스 초기화 → `init()`. 서블릿이 아닌 경로는 크기 제한이 있는 실패 캐시에 기록해 다음 요청부터 클래스 탐색을 건너뛴다(트러블슈팅 5, 6번 참고).
 
 **Keep-Alive**: 소켓의 `SO_TIMEOUT`을 `keepAliveTimeoutSeconds`로 설정해서, 이 시간 동안 다음 요청이 안 들어오면 `SocketTimeoutException`을 유도해 커넥션을 정리한다. 별도 타이머 스레드 없이 소켓 자체 타임아웃으로 유휴 커넥션을 회수하는 방식.
@@ -88,7 +114,7 @@ flowchart TD
 만들면서 발견하고 고친 것들을 문제 → 원인 → 해결 순으로 정리했다.
 
 **1. `NoClassDefFoundError`가 안 잡혀서 서버가 불안정해질 수 있었던 문제**
-`DirectClassServletMapper`가 서블릿 클래스를 리플렉션으로 로딩할 때 `ReflectiveOperationException`만 캐치하고 있었다. 문제는, 컴파일 시점엔 있었는데 런타임 classpath에서 의존 클래스가 빠진 경우 발생하는 `NoClassDefFoundError`는 `Exception`이 아니라 `Error` 계열이라 그대로 전파돼버린다는 것. 멀티캐치로 `NoClassDefFoundError`도 같이 잡아서 `RuntimeException`으로 감싸고 `Optional.empty()`로 처리되게 고쳤다. 이후 같은 계열인 `ExceptionInInitializerError`도 빠져나간다는 걸 발견해 공통 부모인 `LinkageError`로 범위를 넓혔다(5번 참고).
+`DirectClassServletMapper`가 서블릿 클래스를 리플렉션으로 로딩할 때 `ReflectiveOperationException`만 캐치하고 있었다. 문제는, 컴파일 시점엔 있었는데 런타임 classpath에서 의존 클래스가 빠진 경우 발생하는 `NoClassDefFoundError`는 `Exception`이 아니라 `Error` 계열이라 그대로 전파돼버린다는 것. 멀티캐치로 `NoClassDefFoundError`도 같이 잡아서 `RuntimeException`으로 감싸고 `Optional.empty()`로 처리되게 고쳤다. 이후 같은 계열인 `ExceptionInInitializerError`도 빠져나간다는 걸 발견해 공통 부모인 `LinkageError`로 범위를 넓혔다(5번 참고). 또 `Optional.empty()`로 처리하면 "서블릿 아님"과 구분되지 않아 정적 파일 처리로 넘어가 404가 나가는 문제가 있어, 지금은 `ServletInitException`으로 구분해 500으로 응답한다.
 
 **2. 정적 파일 서빙이 파일 전체를 메모리에 올리고 있던 문제**
 위 "정적 파일 서빙 + ETag" 항목 참고. `Files.readAllBytes()` → 스트리밍 방식으로 교체.
@@ -111,18 +137,25 @@ flowchart TD
 - 고려한 점:
   - **크기 제한**: 제한 없는 캐시는 랜덤 경로를 계속 보내는 요청으로 메모리가 무한히 늘어나는 DoS 지점이 된다. `LinkedHashMap.removeEldestEntry`를 오버라이드해 1000개를 넘으면 가장 오래된 항목부터 버리는 FIFO로 제한했다.
   - **동기화**: `LinkedHashMap`은 스레드 안전하지 않아 `Collections.synchronizedMap`으로 감쌌다. `ConcurrentHashMap`에는 삽입 순서/`removeEldestEntry`가 없어 크기 제한을 정확히 구현하기 어려웠다. 락 범위가 해시 조회 한 번이라 경합 비용은 요청당 I/O에 비해 무시할 수준으로 판단했다.
-  - **캐시 대상 구분**: 실패 캐시에는 "클래스가 없다/서블릿이 아니다"만 기록한다. 서블릿 생성·`init()` 실패는 로그를 남기고 `Optional.empty()`로 처리해 예외가 요청 처리 스레드 밖으로 번지지 않게만 했다.
+  - **캐시 대상 구분**: 실패 캐시에는 "클래스가 없다/서블릿이 아니다"만 기록한다. 서블릿 생성·`init()` 실패는 캐시하지 않고 로그를 남긴 뒤 `ServletInitException`으로 알려 500으로 응답한다.
+
+**7. 요청 바디가 keep-alive 연결의 다음 요청을 오염시키던 문제**
+- 문제: 파서가 요청 라인과 헤더까지만 읽고 바디는 읽지 않았다. 바디가 붙은 요청(GET에도 바디는 붙을 수 있다)이 오면 바디가 소켓에 남아, keep-alive 루프의 다음 파싱에서 요청 라인으로 읽혔다. 예를 들어 바디 `name=lee` 뒤에 다음 요청 `GET /index.html HTTP/1.1`이 오면 `name=leeGET /index.html HTTP/1.1`이 한 줄로 파싱돼, 메서드가 `name=leeGET`인 요청으로 처리되어 엉뚱한 501이 나갔다. 프록시가 앞에 있다면 바디 안에 요청을 숨겨 보내는 요청 스머글링으로도 이어질 수 있는 구조였다.
+- 원인: 파서가 `BufferedReader`(문자 단위) 기반이었다. `Content-Length`는 바이트 수인데 Reader는 UTF-8로 디코딩한 문자 수만 셀 수 있어, 한글 1자(3바이트)만 섞여도 경계가 어긋난다. 헤더만 Reader로 읽고 바디는 원본 `InputStream`에서 읽는 것도 불가능했다. `BufferedReader`가 소켓에서 최대 8KB를 미리 읽어 버퍼에 쌓아 두기 때문에, 바디 앞부분이 이미 Reader 안으로 들어가 있다. 또 바이너리 바디는 디코딩 과정에서 `U+FFFD`로 치환되어 복구할 수 없다.
+- 해결: `BufferedInputStream` 하나로 요청 라인/헤더/바디를 모두 바이트 단위로 읽도록 파서를 다시 작성했다. 바디는 `Content-Length` 바이트만큼 정확히 읽으므로, 서블릿이 쓰지 않는 바디라도 소켓에 남지 않는다(Tomcat이 남은 바디를 읽어 버리는 것과 같은 효과).
+- 고려한 점:
+  - **스머글링 방어**: 프록시와 서버가 요청 경계를 다르게 해석할 여지를 없애기 위해 `Content-Length`와 `Transfer-Encoding` 동시 존재, 서로 다른 `Content-Length` 중복, 헤더 이름 주변 공백(`Host : a.com`), 줄 중간의 단독 CR을 400으로 거절한다(RFC 9112 권고).
+  - **읽기 전에 크기 판단**: 413은 `Content-Length` 헤더 값만 보고 바디를 할당하기 전에 거절한다. 다 읽은 뒤 크기를 확인하면 이미 메모리를 쓴 뒤라 의미가 없다. 자릿수(10자리 초과)로 먼저 걸러 `long` 오버플로도 막았다.
+  - **헤더 이름 대소문자**: 기존에는 `LinkedHashMap`에 받은 그대로 넣어서 `host: a.com`처럼 소문자로 보내면 Host 헤더를 찾지 못했다. RFC상 헤더 이름은 대소문자를 구분하지 않으므로 대소문자를 무시하는 맵으로 바꿨다.
 
 ## 알려진 제한사항
 
 - **FD 한도 정책 부재**: `accept()`가 실패하면 로그만 남기고 재시도한다. 기본 설정(스레드풀 max 200 + 큐 100)은 OS 기본 ulimit(1024) 안에서는 안전하지만, 설정값을 크게 올리면 `ulimit -n`도 같이 올려야 한다.
 - **Thread-per-connection 모델**: 커넥션마다 스레드를 하나씩 점유한다(NIO/이벤트 루프는 안 씀). 소규모 트래픽에는 충분하지만 대규모 동시접속에는 스레드 자원 소모가 크다. 실무에서 이런 걸 직접 구현하는 대신 Netty 같은 프레임워크를 쓰는 이유이기도 하다.
-- **서블릿 `init()` 실패 시 404 응답**: `ServletMapper.resolve()`가 `Optional`만 반환해서 "서블릿 아님"과 "서블릿 생성 실패"를 구분하지 못한다. 그래서 생성에 실패하면 정적 파일 처리로 넘어가 500이 아닌 404가 나간다.
-- **강제 종료 시 `service()`와 `destroy()` 중첩 가능**: `shutdownTimeoutSeconds` 안에 끝나지 않은 요청은 `shutdownNow()`로 interrupt만 보내고 기다리지 않으므로, 아직 실행 중인 `service()`와 `destroy()`가 겹칠 수 있다.
 
 ## 서블릿 추가하기
 
-`was-servlets` 모듈에 `SimpleServlet`을 구현한 클래스를 추가하면, `DirectClassServletMapper`가 요청 경로(`/ClassName`)를 클래스명으로 그대로 매핑해서 리플렉션으로 로딩한다. URL prefix 같은 매핑 방식이 더 필요하면 `ServletMapper` 인터페이스를 새로 구현하면 된다.
+`was-servlets` 모듈에 `SimpleServlet`을 구현한 클래스를 추가하면, `DirectClassServletMapper`가 요청 경로(`/ClassName`, 패키지는 `/service.Hello`처럼 점 표기)를 클래스명으로 그대로 매핑해서 리플렉션으로 로딩한다. GET/HEAD/POST 모두 같은 `service()`로 들어오므로, 메서드별 처리가 필요하면 `req.getMethod()`로 분기한다. URL prefix 같은 매핑 방식이 더 필요하면 `ServletMapper` 인터페이스를 새로 구현하면 된다.
 
 ## 실행
 
