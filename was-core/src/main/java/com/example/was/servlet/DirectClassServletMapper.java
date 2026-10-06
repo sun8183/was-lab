@@ -35,16 +35,13 @@ public class DirectClassServletMapper implements ServletMapper {
         if (className.isEmpty() || nonServlets.contains(className)) {
             return Optional.empty();
         }
-        try {
-            // createServlet() 이 null 을 반환하면 ConcurrentHashMap 은 해당 키를 저장하지 않으므로 nonServlets 에 따로 기록한다.
-            SimpleServlet servlet = cache.computeIfAbsent(className, this::createServlet);
-            if (servlet == null) {
-                nonServlets.add(className);
-            }
-            return Optional.ofNullable(servlet);
-        } catch (RuntimeException e) {
-            return Optional.empty();
+        // createServlet() 이 null 을 반환하면 ConcurrentHashMap 은 해당 키를 저장하지 않으므로 nonServlets 에 따로 기록한다.
+        // 생성 실패(ServletInitException)는 캐시하지 않고 호출자에게 그대로 전파해 500 으로 응답하게 한다.
+        SimpleServlet servlet = cache.computeIfAbsent(className, this::createServlet);
+        if (servlet == null) {
+            nonServlets.add(className);
         }
+        return Optional.ofNullable(servlet);
     }
 
     @Override
@@ -58,7 +55,7 @@ public class DirectClassServletMapper implements ServletMapper {
 
     /**
      * 서블릿이 아니면(클래스 없음, SimpleServlet 미구현) null 을 반환하고,
-     * 서블릿이지만 생성/초기화에 실패하면 RuntimeException 을 던진다.
+     * 서블릿이지만 생성/초기화에 실패하면 ServletInitException 을 던진다.
      */
     private SimpleServlet createServlet(String className) {
         Class<?> clazz;
@@ -70,7 +67,7 @@ public class DirectClassServletMapper implements ServletMapper {
             return null;
         } catch (LinkageError e) {
             log.error("Cannot load servlet class {}", className, e);
-            throw new RuntimeException(e);
+            throw new ServletInitException(className, e);
         }
 
         if (!SimpleServlet.class.isAssignableFrom(clazz)) {
@@ -82,10 +79,11 @@ public class DirectClassServletMapper implements ServletMapper {
             SimpleServlet servlet = clazz.asSubclass(SimpleServlet.class).getDeclaredConstructor().newInstance();
             servlet.init();
             return servlet;
-        } catch (ReflectiveOperationException | LinkageError e) {
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
             // ExceptionInInitializerError, NoClassDefFoundError 모두 LinkageError(Error 계열) 하위라 별도로 잡아야 위로 전파되지 않는다.
+            // RuntimeException 은 init() 에서 던진 예외다.
             log.error("Cannot create servlet for class {}", className, e);
-            throw new RuntimeException(e);
+            throw new ServletInitException(className, e);
         }
     }
 

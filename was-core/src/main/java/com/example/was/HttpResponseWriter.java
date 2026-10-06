@@ -26,21 +26,35 @@ public class HttpResponseWriter {
     }
 
     public void writeResponse(OutputStream out, HttpStatus status, String contentType, byte[] body, boolean keepAlive, String etag) throws IOException {
-        writeHeaders(out, status, contentType, body.length, keepAlive, etag);
+        writeHeaders(out, status, contentType, body.length, keepAlive, etag, null);
         out.write(body);
         out.flush();
     }
 
     // 정적 파일 서빙 전용 — 파일 전체를 byte[] 로 읽지 않고 스트리밍으로 전송해 대용량 파일에서도 메모리 사용량을 일정하게 유지한다.
     public void writeResponse(OutputStream out, HttpStatus status, String contentType, Path filePath, long contentLength, boolean keepAlive, String etag) throws IOException {
-        writeHeaders(out, status, contentType, contentLength, keepAlive, etag);
+        writeHeaders(out, status, contentType, contentLength, keepAlive, etag, null);
         try (InputStream in = Files.newInputStream(filePath)) {
             in.transferTo(out);
         }
         out.flush();
     }
 
-    private void writeHeaders(OutputStream out, HttpStatus status, String contentType, long contentLength, boolean keepAlive, String etag) throws IOException {
+    // HEAD 요청용 — 바디 없이 헤더만 보낸다. Content-Length 는 GET 이었을 때의 값을 그대로 쓴다(RFC 9110 9.3.2).
+    public void writeHeadersOnly(OutputStream out, HttpStatus status, String contentType, long contentLength, boolean keepAlive, String etag) throws IOException {
+        writeHeaders(out, status, contentType, contentLength, keepAlive, etag, null);
+        out.flush();
+    }
+
+    // 405 는 허용 메서드 목록(Allow 헤더)을 반드시 함께 보내야 한다(RFC 9110 15.5.6).
+    public void writeMethodNotAllowed(OutputStream out, String allow, boolean keepAlive) throws IOException {
+        byte[] body = HttpStatus.METHOD_NOT_ALLOWED.bodyBytes(CHARSET);
+        writeHeaders(out, HttpStatus.METHOD_NOT_ALLOWED, TEXT_PLAIN, body.length, keepAlive, null, allow);
+        out.write(body);
+        out.flush();
+    }
+
+    private void writeHeaders(OutputStream out, HttpStatus status, String contentType, long contentLength, boolean keepAlive, String etag, String allow) throws IOException {
         String connection = keepAlive ? CONNECTION_KEEP_ALIVE : CONNECTION_CLOSE;
         StringBuilder sb = new StringBuilder();
         sb.append("HTTP/1.1 ").append(status.code).append(" ").append(status.reason).append("\r\n");
@@ -53,6 +67,9 @@ public class HttpResponseWriter {
         if (etag != null) {
             sb.append("ETag: ").append(etag).append("\r\n");
             sb.append("Cache-Control: no-cache\r\n");
+        }
+        if (allow != null) {
+            sb.append("Allow: ").append(allow).append("\r\n");
         }
         sb.append("\r\n");
         out.write(sb.toString().getBytes(CHARSET));
