@@ -69,11 +69,15 @@ flowchart TD
 
 **로깅**: logback `SizeAndTimeBasedRollingPolicy`로 일별 폴더(`logs/yyyy-MM-dd/`)에 로그를 분리하고, 파일당 10MB 초과 시 분할, 30일치 보관, 총 용량 1GB로 제한한다. 접근 로그는 HTTP 상태 코드에 따라 로그 레벨을 다르게 남긴다(5xx는 ERROR, 4xx는 WARN, 그 외는 INFO). 에러 발생 시에는 스택트레이스 전체를 남긴다.
 
-**서블릿 API**: `SimpleServlet` 추상 클래스가 `service`, `getParameter`, `getWriter`를 제공한다. `DirectClassServletMapper`가 요청 경로(`/ClassName`)를 그대로 클래스명으로 써서 `Class.forName()`으로 리플렉션 로딩한다. `CurrentTime` 서블릿이 실제 구현 예시.
+**서블릿 API**: `SimpleServlet` 인터페이스가 `init` → `service` → `destroy` 생명주기를 정의한다(`init`/`destroy`는 default 메서드라 필요할 때만 구현). `service`로 넘어오는 `ServletRequest.getParameter()`로 쿼리 파라미터를 읽고, `ServletResponse.getWriter()`로 응답 바디를 쓴다. `DirectClassServletMapper`가 요청 경로(`/ClassName`)를 그대로 클래스명으로 써서 `Class.forName()`으로 리플렉션 로딩한다. `CurrentTime` 서블릿이 실제 구현 예시.
+
+- **생명주기**: `init()`은 해당 서블릿으로 첫 요청이 들어올 때 1회(지연 초기화), `service()`는 요청마다, `destroy()`는 graceful shutdown 시 생성에 성공한 서블릿에 대해 1회 호출된다.
+- **싱글톤**: 클래스당 인스턴스 하나를 `ConcurrentHashMap`에 캐시해 재사용한다. `computeIfAbsent`로 동시 첫 요청에서도 생성/`init()`은 한 번만 일어난다. 여러 워커 스레드가 같은 인스턴스의 `service()`를 동시에 호출하므로, 서블릿에 상태 필드를 두면 동기화는 서블릿 구현 측 책임이다.
+- **로딩 순서**: 로딩(`initialize=false`) → `SimpleServlet` 타입 체크 → (서블릿일 때만) 인스턴스 생성 시 클래스 초기화 → `init()`. 서블릿이 아닌 경로는 크기 제한이 있는 실패 캐시에 기록해 다음 요청부터 클래스 탐색을 건너뛴다(트러블슈팅 5, 6번 참고).
 
 **Keep-Alive**: 소켓의 `SO_TIMEOUT`을 `keepAliveTimeoutSeconds`로 설정해서, 이 시간 동안 다음 요청이 안 들어오면 `SocketTimeoutException`을 유도해 커넥션을 정리한다. 별도 타이머 스레드 없이 소켓 자체 타임아웃으로 유휴 커넥션을 회수하는 방식.
 
-**정적 파일 서빙 + ETag**: 처음에는 `Files.readAllBytes()`로 파일 전체를 읽어서 응답했는데, 이러면 큰 파일 여러 개가 동시에 요청될 때 힙이 위험해진다. `Content-Length`는 `Files.size()`로 미리 구하고, 바디는 `Files.newInputStream()` + `InputStream.transferTo()`로 8KB 버퍼 단위 스트리밍하도록 바꿨다. 힙 사용량이 파일 크기와 무관하게 일정해짐. ETag는 파일 내용 해시로 만들어서, 요청의 `If-None-Match`가 일치하면 바디 없이 304만 내려준다.
+**정적 파일 서빙 + ETag**: 처음에는 `Files.readAllBytes()`로 파일 전체를 읽어서 응답했는데, 이러면 큰 파일 여러 개가 동시에 요청될 때 힙이 위험해진다. `Content-Length`는 `Files.size()`로 미리 구하고, 바디는 `Files.newInputStream()` + `InputStream.transferTo()`로 8KB 버퍼 단위 스트리밍하도록 바꿨다. 힙 사용량이 파일 크기와 무관하게 일정해짐. ETag는 파일의 최종 수정 시각과 크기를 조합해(`"<lastModified hex>-<size hex>"`) 만들고, 요청의 `If-None-Match`가 일치하면 바디 없이 304만 내려준다. 내용 해시를 쓰면 ETag를 계산하려고 매 요청마다 파일 전체를 읽어야 해서 스트리밍으로 얻은 이점이 사라지기 때문에, 파일 메타데이터만으로 만드는 방식을 택했다(nginx와 같은 방식).
 
 **ThreadPoolExecutor 설정화**: `coreSize`/`maxSize`/`queueSize`를 설정 파일로 뺐다. 큐까지 가득 찬 상태에서 새 연결이 들어오면 스레드를 잡지 않고 바로 503을 내려서, 서버가 무한정 커넥션을 받다가 죽는 상황을 막는다.
 
@@ -84,7 +88,7 @@ flowchart TD
 만들면서 발견하고 고친 것들을 문제 → 원인 → 해결 순으로 정리했다.
 
 **1. `NoClassDefFoundError`가 안 잡혀서 서버가 불안정해질 수 있었던 문제**
-`DirectClassServletMapper`가 서블릿 클래스를 리플렉션으로 로딩할 때 `ReflectiveOperationException`만 캐치하고 있었다. 문제는, 컴파일 시점엔 있었는데 런타임 classpath에서 의존 클래스가 빠진 경우 발생하는 `NoClassDefFoundError`는 `Exception`이 아니라 `Error` 계열이라 그대로 전파돼버린다는 것. 멀티캐치로 `NoClassDefFoundError`도 같이 잡아서 `RuntimeException`으로 감싸고 `Optional.empty()`로 처리되게 고쳤다.
+`DirectClassServletMapper`가 서블릿 클래스를 리플렉션으로 로딩할 때 `ReflectiveOperationException`만 캐치하고 있었다. 문제는, 컴파일 시점엔 있었는데 런타임 classpath에서 의존 클래스가 빠진 경우 발생하는 `NoClassDefFoundError`는 `Exception`이 아니라 `Error` 계열이라 그대로 전파돼버린다는 것. 멀티캐치로 `NoClassDefFoundError`도 같이 잡아서 `RuntimeException`으로 감싸고 `Optional.empty()`로 처리되게 고쳤다. 이후 같은 계열인 `ExceptionInInitializerError`도 빠져나간다는 걸 발견해 공통 부모인 `LinkageError`로 범위를 넓혔다(5번 참고).
 
 **2. 정적 파일 서빙이 파일 전체를 메모리에 올리고 있던 문제**
 위 "정적 파일 서빙 + ETag" 항목 참고. `Files.readAllBytes()` → 스트리밍 방식으로 교체.
@@ -95,10 +99,26 @@ flowchart TD
 **4. 개발 환경(Windows)에서만 우연히 통과하던 클래스 로딩**
 `DirectClassServletMapper`는 URL 경로를 그대로 클래스명으로 써서 `Class.forName()`을 호출한다. Java 클래스명은 대소문자를 구분해야 하는데, Windows(NTFS)나 macOS 기본 파일시스템은 대소문자를 구분하지 않다보니 `/hello` 요청이 실제 클래스 `Hello`와 그냥 매칭돼버렸다. 개발 환경에서는 문제없이 동작하다가 Linux(대소문자 구분 파일시스템)에 배포하면 `ClassNotFoundException`이 날 수 있는, 코드가 아니라 환경 차이에서 오는 이슈였다. 코드로 고칠 부분은 아니고, 배포 전에 반드시 Linux 환경에서 실제 요청 경로로 검증해봐야 한다는 걸 확인한 정도.
 
+**5. URL로 지정한 임의 클래스의 static 초기화가 타입 체크 전에 실행되던 문제**
+- 문제: `Class.forName(className)`은 `Class.forName(className, true, loader)`와 같아서, 로딩과 동시에 클래스 초기화(`static {}` 블록, static 필드 초기화)까지 실행한다. 그런데 `className`은 URL에서 온 외부 입력이고, `SimpleServlet` 타입 체크는 그 다음에 하고 있었다. 즉 클래스패스에 있는 아무 클래스(JDK, Jackson, logback 등)나 URL로 지정해 static 코드를 실행시킬 수 있었다.
+- 추가로 발견한 것: static 초기화 중 예외가 나면 `ExceptionInInitializerError`가 발생하는데, `Error` 계열이라 기존 catch(`ReflectiveOperationException | NoClassDefFoundError`)를 빠져나가 워커 스레드가 응답 없이 죽었다.
+- 원인: 클래스 로딩의 세 단계(로딩 → 링킹 → 초기화) 중 코드가 실행되는 건 초기화뿐인데, 검증 전에 초기화까지 한 번에 하고 있었다.
+- 해결: `Class.forName(className, false, loader)`로 로딩만 하고, 타입 체크를 통과한 서블릿만 `newInstance()` 시점에 초기화되도록 순서를 바꿨다. 서블릿이 아닌 클래스는 초기화될 일이 없어진다. catch 범위는 `NoClassDefFoundError` → `LinkageError`로 넓혔다. JVM 자체 이상인 `VirtualMachineError`(OOM 등)는 복구 불가능하므로 일부러 잡지 않는다.
+
+**6. 정적 파일 요청마다 클래스패스 탐색 + 예외 생성 비용이 들던 문제**
+- 문제: 디스패처는 서블릿 매핑을 먼저 시도하므로 `/index.html`, `/favicon.ico` 같은 정적 요청도 매번 `Class.forName("index.html")`을 거쳤다. 실패 결과는 캐시되지 않아서 요청마다 클래스패스(JAR)를 탐색하고 스택트레이스가 담긴 `ClassNotFoundException`을 새로 만들었다.
+- 해결: 서블릿이 아닌 경로(클래스 없음, `SimpleServlet` 미구현)를 실패 캐시에 기록해 다음 요청부터 바로 건너뛰게 했다.
+- 고려한 점:
+  - **크기 제한**: 제한 없는 캐시는 랜덤 경로를 계속 보내는 요청으로 메모리가 무한히 늘어나는 DoS 지점이 된다. `LinkedHashMap.removeEldestEntry`를 오버라이드해 1000개를 넘으면 가장 오래된 항목부터 버리는 FIFO로 제한했다.
+  - **동기화**: `LinkedHashMap`은 스레드 안전하지 않아 `Collections.synchronizedMap`으로 감쌌다. `ConcurrentHashMap`에는 삽입 순서/`removeEldestEntry`가 없어 크기 제한을 정확히 구현하기 어려웠다. 락 범위가 해시 조회 한 번이라 경합 비용은 요청당 I/O에 비해 무시할 수준으로 판단했다.
+  - **캐시 대상 구분**: 실패 캐시에는 "클래스가 없다/서블릿이 아니다"만 기록한다. 서블릿 생성·`init()` 실패는 로그를 남기고 `Optional.empty()`로 처리해 예외가 요청 처리 스레드 밖으로 번지지 않게만 했다.
+
 ## 알려진 제한사항
 
 - **FD 한도 정책 부재**: `accept()`가 실패하면 로그만 남기고 재시도한다. 기본 설정(스레드풀 max 200 + 큐 100)은 OS 기본 ulimit(1024) 안에서는 안전하지만, 설정값을 크게 올리면 `ulimit -n`도 같이 올려야 한다.
 - **Thread-per-connection 모델**: 커넥션마다 스레드를 하나씩 점유한다(NIO/이벤트 루프는 안 씀). 소규모 트래픽에는 충분하지만 대규모 동시접속에는 스레드 자원 소모가 크다. 실무에서 이런 걸 직접 구현하는 대신 Netty 같은 프레임워크를 쓰는 이유이기도 하다.
+- **서블릿 `init()` 실패 시 404 응답**: `ServletMapper.resolve()`가 `Optional`만 반환해서 "서블릿 아님"과 "서블릿 생성 실패"를 구분하지 못한다. 그래서 생성에 실패하면 정적 파일 처리로 넘어가 500이 아닌 404가 나간다.
+- **강제 종료 시 `service()`와 `destroy()` 중첩 가능**: `shutdownTimeoutSeconds` 안에 끝나지 않은 요청은 `shutdownNow()`로 interrupt만 보내고 기다리지 않으므로, 아직 실행 중인 `service()`와 `destroy()`가 겹칠 수 있다.
 
 ## 서블릿 추가하기
 
