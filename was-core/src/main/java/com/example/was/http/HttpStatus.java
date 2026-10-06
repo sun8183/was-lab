@@ -6,6 +6,8 @@ public enum HttpStatus {
     BAD_REQUEST(400, "Bad Request"),
     FORBIDDEN(403, "Forbidden"),
     NOT_FOUND(404, "Not Found"),
+    METHOD_NOT_ALLOWED(405, "Method Not Allowed"),
+    CONTENT_TOO_LARGE(413, "Content Too Large"),
     INTERNAL_SERVER_ERROR(500, "Internal Server Error"),
     NOT_IMPLEMENTED(501, "Not Implemented"),
     SERVICE_UNAVAILABLE(503, "Service Unavailable");
