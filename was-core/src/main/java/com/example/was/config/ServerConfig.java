@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 public record ServerConfig(int port, int keepAliveTimeoutSeconds, int shutdownTimeoutSeconds,
+                           int maxRequestBodyBytes,
                            List<String> blockedExtensions,
                            ThreadPoolConfig threadPool,
                            Map<String, VirtualHostConfig> virtualHosts) {

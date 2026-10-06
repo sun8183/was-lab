@@ -16,6 +16,7 @@ public class ConfigLoader {
 
     private static final int DEFAULT_KEEP_ALIVE_SECONDS = 20;
     private static final int DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 30;
+    private static final int DEFAULT_MAX_REQUEST_BODY_BYTES = 1024 * 1024;
     private static final int DEFAULT_THREAD_POOL_CORE = 10;
     private static final int DEFAULT_THREAD_POOL_MAX = 200;
     private static final int DEFAULT_THREAD_POOL_KEEP_ALIVE_SECONDS = 60;
@@ -29,6 +30,7 @@ public class ConfigLoader {
                 parsePort(root),
                 parseKeepAliveTimeout(root),
                 parseShutdownTimeout(root),
+                parseMaxRequestBodyBytes(root),
                 parseBlockedExtensions(root),
                 parseThreadPool(root),
                 parseVirtualHosts(root)
@@ -45,6 +47,10 @@ public class ConfigLoader {
 
     private int parseShutdownTimeout(JsonNode root) {
         return root.path("shutdownTimeoutSeconds").asInt(DEFAULT_SHUTDOWN_TIMEOUT_SECONDS);
+    }
+
+    private int parseMaxRequestBodyBytes(JsonNode root) {
+        return root.path("maxRequestBodyBytes").asInt(DEFAULT_MAX_REQUEST_BODY_BYTES);
     }
 
     private List<String> parseBlockedExtensions(JsonNode root) {

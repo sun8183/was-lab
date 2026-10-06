@@ -2,6 +2,7 @@
   "port": 8080,
   "keepAliveTimeoutSeconds": 20,
   "shutdownTimeoutSeconds": 30,
+  "maxRequestBodyBytes": 1048576,
   "blockedExtensions": [".exe"],
   "threadPool": {
     "coreSize": 50,

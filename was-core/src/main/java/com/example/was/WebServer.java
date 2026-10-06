@@ -45,7 +45,7 @@ public class WebServer {
         StaticFileHandler staticFileHandler = new StaticFileHandler(rules);
         this.responseWriter = new HttpResponseWriter(keepAliveTimeoutSeconds);
         this.dispatcher = new RequestDispatcher(config, servletMapper, staticFileHandler, responseWriter);
-        this.parser = new HttpRequestParser();
+        this.parser = new HttpRequestParser(config.maxRequestBodyBytes());
         this.servletMapper = servletMapper;
     }
 

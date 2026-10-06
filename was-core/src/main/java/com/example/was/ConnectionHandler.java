@@ -1,16 +1,17 @@
 package com.example.was;
 
 import com.example.was.http.HttpMethod;
+import com.example.was.http.HttpParseException;
 import com.example.was.http.HttpRequest;
 import com.example.was.http.HttpRequestParser;
 import com.example.was.http.HttpStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.Charset;
@@ -41,24 +42,25 @@ public class ConnectionHandler implements Runnable {
     public void run() {
         String clientIp = socket.getInetAddress().getHostAddress();
         try (socket;
-             BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), CHARSET));
+             InputStream in = new BufferedInputStream(socket.getInputStream());
              OutputStream out = new BufferedOutputStream(socket.getOutputStream())) {
 
-            while (handleRequest(reader, out, clientIp)) { /* keep-alive */ }
+            while (handleRequest(in, out, clientIp)) { /* keep-alive */ }
 
         } catch (IOException e) {
             log.error("connection error", e);
         }
     }
 
-    private boolean handleRequest(BufferedReader reader, OutputStream out, String clientIp) throws IOException {
+    private boolean handleRequest(InputStream in, OutputStream out, String clientIp) throws IOException {
         HttpRequest request;
         try {
-            request = parser.parse(reader);
-        } catch (IllegalArgumentException e) {
-            log.warn("{} malformed request line: {}", clientIp, e.getMessage());
-            responseWriter.writeResponse(out, HttpStatus.BAD_REQUEST, TEXT_PLAIN,
-                    HttpStatus.BAD_REQUEST.bodyBytes(CHARSET), false, null);
+            request = parser.parse(in);
+        } catch (HttpParseException e) {
+            // 파싱에 실패하면 요청 경계를 신뢰할 수 없으므로 응답 후 연결을 닫는다.
+            log.warn("{} cannot parse request: {}", clientIp, e.getMessage());
+            responseWriter.writeResponse(out, e.status(), TEXT_PLAIN,
+                    e.status().bodyBytes(CHARSET), false, null);
             return false;
         } catch (IOException e) {
             return false;
