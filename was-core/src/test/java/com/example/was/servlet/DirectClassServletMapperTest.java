@@ -57,9 +57,31 @@ public class DirectClassServletMapperTest {
     }
 
     @Test
-    public void servletStaticInitFailureReturnsEmptyInsteadOfThrowingError() {
-        Optional<SimpleServlet> result = mapper.resolve("/com.example.was.servlet.DirectClassServletMapperTest$BrokenStaticInitServlet");
-        assertFalse(result.isPresent());
+    public void servletStaticInitFailureThrowsServletInitExceptionInsteadOfError() {
+        try {
+            mapper.resolve("/com.example.was.servlet.DirectClassServletMapperTest$BrokenStaticInitServlet");
+            fail("expected ServletInitException");
+        } catch (ServletInitException e) {
+            assertTrue(e.getCause() instanceof ExceptionInInitializerError);
+        }
+    }
+
+    @Test
+    public void initFailureThrowsServletInitExceptionAndIsNotCached() {
+        String path = "/com.example.was.servlet.DirectClassServletMapperTest$BrokenInitServlet";
+        assertThrows(ServletInitException.class, () -> mapper.resolve(path));
+        // 실패는 캐시되지 않으므로 다음 요청에서도 다시 생성을 시도한다(empty 로 바뀌지 않는다).
+        assertThrows(ServletInitException.class, () -> mapper.resolve(path));
+    }
+
+    public static class BrokenInitServlet implements SimpleServlet {
+        @Override
+        public void init() {
+            throw new IllegalStateException("init failure");
+        }
+
+        @Override
+        public void service(ServletRequest req, ServletResponse res) {}
     }
 
     static volatile boolean trapInitialized = false;
