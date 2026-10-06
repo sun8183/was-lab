@@ -25,6 +25,11 @@ public class ConfigLoaderTest {
     }
 
     @Test
+    public void maxRequestBodyBytesLoaded() {
+        assertEquals(1048576, config.maxRequestBodyBytes());
+    }
+
+    @Test
     public void twoVirtualHostsLoaded() {
         assertEquals(2, config.virtualHosts().size());
     }

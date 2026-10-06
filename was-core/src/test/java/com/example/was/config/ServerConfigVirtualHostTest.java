@@ -18,7 +18,7 @@ public class ServerConfigVirtualHostTest {
         for (VirtualHostConfig host : hosts) {
             virtualHosts.put(host.host().toLowerCase(), host);
         }
-        return new ServerConfig(8080, 20, 30, List.of(), new ThreadPoolConfig(10, 200, 60, 100), virtualHosts);
+        return new ServerConfig(8080, 20, 30, 1024 * 1024, List.of(), new ThreadPoolConfig(10, 200, 60, 100), virtualHosts);
     }
 
     @Test

@@ -2,9 +2,9 @@ package com.example.was.http;
 
 import org.junit.Test;
 
-import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
 
 import static org.junit.Assert.*;
 
@@ -13,7 +13,7 @@ public class HttpRequestParserHostHeaderTest {
     private final HttpRequestParser parser = new HttpRequestParser();
 
     private HttpRequest parse(String raw) throws IOException {
-        return parser.parse(new BufferedReader(new StringReader(raw)));
+        return parser.parse(new ByteArrayInputStream(raw.getBytes(StandardCharsets.ISO_8859_1)));
     }
 
     @Test
