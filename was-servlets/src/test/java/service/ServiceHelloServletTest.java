@@ -30,6 +30,16 @@ public class ServiceHelloServletTest {
     }
 
     @Test
+    public void missingNameFallsBackToDefault() throws IOException {
+        SimpleServletRequest req = new SimpleServletRequest("GET", "/service.Hello");
+        SimpleServletResponse res = new SimpleServletResponse();
+
+        new Hello().service(req, res);
+
+        assertEquals("Hello from service package, World", res.getBody());
+    }
+
+    @Test
     public void serviceHelloViaMapper() throws IOException {
         SimpleServlet servlet = mapper.resolve("/service.Hello").orElseThrow();
         SimpleServletRequest req = new SimpleServletRequest("GET", "/service.Hello?name=Carol");
