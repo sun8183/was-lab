@@ -38,6 +38,14 @@ public class DirectClassServletMapperTest {
     }
 
     @Test
+    public void wrongCaseClassNameReturnsEmptyNotServletInitException() {
+        // Windows/macOS 에서는 greetingServlet.class 요청이 GreetingServlet.class 를 찾아 NoClassDefFoundError(wrong name) 가 나고,
+        // Linux 에서는 ClassNotFoundException 이 난다. 어느 쪽이든 "그 이름의 서블릿 없음"(empty → 404) 이어야 한다.
+        Optional<SimpleServlet> result = mapper.resolve("/com.example.was.servlet.greetingServlet");
+        assertFalse(result.isPresent());
+    }
+
+    @Test
     public void nonServletClassReturnsEmpty() {
         Optional<SimpleServlet> result = mapper.resolve("/java.lang.String");
         assertFalse(result.isPresent());
