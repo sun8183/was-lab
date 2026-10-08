@@ -20,19 +20,27 @@ public class StaticFileHandler {
         this.forbiddenRules = forbiddenRules;
     }
 
-    public ServeResult resolve(VirtualHostConfig vhost, HttpRequest request) throws IOException {
+    /**
+     * 요청 경로에 해당하는 파일을 찾고 접근 가능 여부만 검사한다.
+     * 금지 규칙에 걸리면 ForbiddenException(403), 파일이 없으면 NotFoundException(404).
+     * 메서드 검사(405)보다 먼저 호출해야 없는 경로에 405 가 나가지 않는다.
+     */
+    public Path locate(VirtualHostConfig vhost, HttpRequest request) {
         Path httpRoot = Path.of(vhost.httpRoot()).toAbsolutePath().normalize();
         Path resolved = resolveFilePath(httpRoot, request.path());
-
         checkAccess(httpRoot, resolved);
+        return resolved;
+    }
 
-        String etag = computeEtag(resolved);
+    /** locate() 로 찾은 파일의 응답 정보(ETag, 304 여부, 크기)를 만든다. */
+    public ServeResult serve(Path file, HttpRequest request) throws IOException {
+        String etag = computeEtag(file);
         if (etag.equals(request.headers().get(HDR_IF_NONE_MATCH))) {
             return ServeResult.notModified(etag);
         }
 
-        long size = Files.size(resolved);
-        return ServeResult.ok(contentTypeFor(resolved), resolved, size, etag);
+        long size = Files.size(file);
+        return ServeResult.ok(contentTypeFor(file), file, size, etag);
     }
 
     private void checkAccess(Path httpRoot, Path resolved) {

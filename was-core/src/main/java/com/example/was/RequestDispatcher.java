@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.EnumSet;
 import java.util.Optional;
 import java.util.Set;
@@ -75,12 +76,16 @@ public class RequestDispatcher {
     }
 
     private HttpStatus serveStaticFile(OutputStream out, VirtualHostConfig vhost, HttpRequest request, boolean keepAlive) throws IOException {
+        // 순서: 403/404(리소스 확인) → 405(메서드) → 304/200.
+        // 405 는 "리소스는 있지만 메서드를 지원하지 않음"이므로, 없는 경로에는 404 가 먼저 나가야 한다.
+        Path file = staticFileHandler.locate(vhost, request);
+
         // 정적 파일은 조회(GET, HEAD)만 가능하다. POST 등은 서블릿에서만 처리한다.
         if (STATIC_METHODS.stream().noneMatch(m -> m.name().equals(request.method()))) {
             responseWriter.writeMethodNotAllowed(out, STATIC_ALLOW_HEADER, keepAlive);
             return HttpStatus.METHOD_NOT_ALLOWED;
         }
-        StaticFileHandler.ServeResult result = staticFileHandler.resolve(vhost, request);
+        StaticFileHandler.ServeResult result = staticFileHandler.serve(file, request);
         if (result.status() == HttpStatus.NOT_MODIFIED) {
             responseWriter.writeNotModified(out, result.etag(), keepAlive);
         } else if (isHead(request)) {
