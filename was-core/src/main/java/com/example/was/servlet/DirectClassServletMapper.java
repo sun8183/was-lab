@@ -66,6 +66,11 @@ public class DirectClassServletMapper implements ServletMapper {
         } catch (ClassNotFoundException e) {
             return null;
         } catch (LinkageError e) {
+            if (isWrongNameError(e)) {
+                // 대소문자를 구분하지 않는 파일시스템(Windows, macOS)에서 /hello 요청이 Hello.class 를 찾아 읽으면
+                // JVM 이 파일 안의 실제 이름과 비교해 "wrong name" 으로 거절한다. 그 이름의 클래스는 없는 것이므로 404.
+                return null;
+            }
             log.error("Cannot load servlet class {}", className, e);
             throw new ServletInitException(className, e);
         }
@@ -85,6 +90,13 @@ public class DirectClassServletMapper implements ServletMapper {
             log.error("Cannot create servlet for class {}", className, e);
             throw new ServletInitException(className, e);
         }
+    }
+
+    // 의존 클래스 누락 같은 진짜 배포 오류(500)와 구분할 공개 API 가 없어 JVM 메시지 형식("... (wrong name: ...)")을 확인한다.
+    private static boolean isWrongNameError(LinkageError e) {
+        return e instanceof NoClassDefFoundError
+                && e.getMessage() != null
+                && e.getMessage().contains("(wrong name:");
     }
 
     private static String toClassName(String requestPath) {
