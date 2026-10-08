@@ -1,10 +1,9 @@
 # was-lab
 
-소켓 레벨부터 직접 구현한 Java Web Application Server. HTTP/1.1 요청 파싱(GET/HEAD/POST, keep-alive), Servlet 유사 API, 가상호스트, 정적 파일 서빙, 스레드풀, graceful shutdown을 포함합니다.
-
+소켓 레벨부터 직접 구현한 Java Web Application Server. HTTP/1.1 요청 파싱(GET/HEAD/POST, keep-alive), Servlet 유사 API, 가상호스트, 정적 파일 서빙, 스레드풀, graceful shutdown을 포함한 프로젝트
 ## 배경
 
-Spring과 Tomcat이 제공하는 요청 파싱, 커넥션·스레드 관리, 서블릿 로딩을 ServerSocket부터 직접 구현했습니다. HTTP/1.1(GET/HEAD/POST, keep-alive), 가상호스트, 정적 파일 스트리밍과 ETag, 스레드풀 포화 시 503, graceful shutdown을 포함하며, 만들면서 마주친 실패 지점과 고친 이유를 기록하는 데 집중했습니다.
+HTTP/1.1(GET/HEAD/POST, keep-alive), 가상호스트, 정적 파일 스트리밍과 ETag, 스레드풀 포화 시 503, graceful shutdown을 포함하며, WAS의 내부 구조와 동작 방식을 학습하는 것을 목표로 했습니다.
 
 ## 모듈 구성
 
