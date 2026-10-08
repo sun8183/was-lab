@@ -1,10 +1,10 @@
 # was-lab
 
-JDK 소켓 레벨부터 직접 구현한 Java Web Application Server. HTTP/1.1 요청 파싱(GET/HEAD/POST, keep-alive), Servlet 유사 API, 가상호스트, 정적 파일 서빙, 스레드풀, graceful shutdown을 포함한다.
+소켓 레벨부터 직접 구현한 Java Web Application Server. HTTP/1.1 요청 파싱(GET/HEAD/POST, keep-alive), Servlet 유사 API, 가상호스트, 정적 파일 서빙, 스레드풀, graceful shutdown을 포함합니다.
 
 ## 배경
 
-Spring과 같은 프레임워크가 내부적으로 처리해주던 요청 파싱, 커넥션 관리, 스레드 모델, 정적/동적 리소스 디스패치, 리소스 한계 처리 등을 ServerSocket 레벨부터 직접 구현하며 WAS(Web Application Server)의 동작 원리를 이해하고자 진행한 프로젝트입니다. 단순히 기능을 구현하는 것을 넘어, 구현 과정에서 마주한 문제와 그것을 해결한 이유를 기록하는 데 중점을 두었습니다.
+Spring과 Tomcat이 제공하는 요청 파싱, 커넥션·스레드 관리, 서블릿 로딩을 ServerSocket부터 직접 구현했습니다. HTTP/1.1(GET/HEAD/POST, keep-alive), 가상호스트, 정적 파일 스트리밍과 ETag, 스레드풀 포화 시 503, graceful shutdown을 포함하며, 만들면서 마주친 실패 지점과 고친 이유를 기록하는 데 집중했습니다.
 
 ## 모듈 구성
 
@@ -39,7 +39,7 @@ flowchart TD
     D -->|accept 반복| D
 ```
 
-스레드는 `ThreadPoolExecutor`로 재사용하지만, 연결 단위 처리 객체(`ConnectionHandler`)는 매 연결마다 새로 만든다. 즉 스레드 자체는 풀링되어 있어도 커넥션 하나가 스레드 하나를 끝까지 붙잡는 thread-per-connection 모델이다. 동시 커넥션이 늘면 먼저 큐(100)가 차오르고, 그래도 못 따라가면 스레드가 core(50)를 넘어 max(200)까지 늘어난다. max까지 다 쓰고 큐도 다시 꽉 차면, 그 이후 요청은 스레드도 큐도 못 잡고 바로 503이 나간다.
+스레드는 `ThreadPoolExecutor`로 재사용하지만, `accept()`로 받은 소켓마다 `ConnectionHandler`를 새로 만들어 풀에 넘긴다. `ConnectionHandler.run()`은 keep-alive 루프를 돌며 연결이 닫히거나 `keepAliveTimeoutSeconds`(기본 20초)가 지날 때까지 반환하지 않는다. 다음 요청을 기다리는 동안에도 스레드가 소켓 `read()`에서 블로킹된 채로 묶여 있으므로, 스레드 자체는 풀링되어 있어도 커넥션 하나가 스레드 하나를 끝까지 붙잡는 thread-per-connection 모델이다. 따라서 요청 없이 연결만 열어둔 클라이언트도 타임아웃 전까지 스레드를 하나씩 차지한다. 동시 커넥션이 늘면 먼저 큐(100)가 차오르고, 그래도 못 따라가면 스레드가 core(50)를 넘어 max(200)까지 늘어난다. max까지 다 쓰고 큐도 다시 꽉 차면, 그 이후 요청은 스레드도 큐도 못 잡고 바로 503이 나간다.
 
 ### 설정 (`config.json`)
 
@@ -66,8 +66,8 @@ flowchart TD
 
 **HTTP 요청 파싱**: 소켓 입력을 `BufferedInputStream` 하나로 받아 요청 라인/헤더/바디를 모두 바이트 단위로 읽는다.
 
-- 줄은 LF까지 읽고 앞의 CR을 제거한다(단독 LF도 허용). 헤더는 ISO-8859-1로 디코딩해 어떤 바이트도 손실되지 않게 한다.
-- 헤더 이름은 대소문자를 구분하지 않는다(`TreeMap(CASE_INSENSITIVE_ORDER)`).
+- 줄 끝은 표준인 `\r\n`뿐 아니라 `\n`만 와도 인정하고, 끝에 붙은 `\r`은 잘라낸다. 헤더 바이트는 1바이트가 1문자로 대응하는 ISO-8859-1로 문자열로 바꿔, 비ASCII나 깨진 바이트가 와도 `�`로 치환되지 않고 원본 그대로 남게 했다.
+- 헤더 이름은 `Host`, `host`, `HOST`를 같은 헤더로 찾는다(RFC 9110). `HashMap`은 대소문자를 구분하므로, 비교 규칙을 지정할 수 있는 `TreeMap(String.CASE_INSENSITIVE_ORDER)`를 썼다. 키가 정렬되는 건 부수효과일 뿐 순서에 의존하는 코드는 없다.
 - 바디는 메서드와 무관하게 `Content-Length` 바이트만큼 `readNBytes()`로 읽는다. 헤더가 없으면 바디 길이 0.
 - 한 줄 8KB, 헤더 100개, 바디 `maxRequestBodyBytes`로 크기를 제한한다.
 - 파싱 실패는 `HttpParseException`이 응답할 상태 코드를 들고 올라오고, 요청 경계를 더 이상 신뢰할 수 없으므로 응답 후 연결을 닫는다.
@@ -84,7 +84,7 @@ flowchart TD
 
 - **정적 파일**: GET, HEAD만 허용한다. 처리 순서는 403/404(리소스 확인) → 405(메서드) → 304/200이다. 405는 "리소스는 있지만 메서드를 지원하지 않음"이므로 없는 경로에는 404가 먼저 나가야 하고, 메서드 검사가 ETag 비교보다 앞서야 POST에 304가 나가지 않는다. 그 외 메서드는 405와 함께 `Allow: GET, HEAD` 헤더를 보낸다(RFC 9110상 405에는 `Allow`가 필수). 허용 메서드는 `EnumSet` 하나에서 정의해 실제 검사와 `Allow` 헤더 값이 어긋나지 않게 했다.
 - **HEAD**: GET과 같은 응답에서 바디만 뺀다. `Content-Length`는 GET이었을 때의 값을 그대로 보낸다. HEAD 요청이면 출력 스트림을 `HeadResponseOutputStream`(헤더 끝 `\r\n\r\n` 이후 바이트를 버림)으로 감싸서, 서블릿·에러 페이지 등 어떤 응답 경로에서도 바디가 나가지 않게 했다. keep-alive에서 HEAD 응답에 바디가 섞이면 클라이언트가 그 바이트를 다음 응답으로 읽어 연결이 깨지기 때문이다. 정적 파일은 바디를 버리더라도 파일을 끝까지 읽는 비용이 드므로 아예 헤더만 쓴다.
-- **POST**: 서블릿으로만 처리된다. 폼 데이터는 `getParameter()`로, 그 외 형식(JSON 등)은 `getBody()` 원본 바이트로 받는다.
+- **POST**: 서블릿으로만 처리된다. 서버가 해석하는 바디는 `application/x-www-form-urlencoded` 폼 하나뿐이며, `getParameter()`로 읽을 수 있다. JSON 등 그 외 형식은 서버가 파싱하지 않고 `getBody()`로 원본 바이트를 넘기므로, 해석(예: Jackson으로 객체 변환)은 서블릿이 직접 한다.
 
 **가상호스트 매칭**: Host 헤더 문자열을 키로 하는 `Map`에서 조회한다(O(1)). 매칭되는 호스트가 없으면 설정 파일에 나열된 순서상 첫 번째 가상호스트로 폴백하는데, 이 순서 보장을 위해 내부적으로 `LinkedHashMap`을 쓴다.
 
@@ -94,12 +94,12 @@ flowchart TD
 
 **로깅**: logback `SizeAndTimeBasedRollingPolicy`로 일별 폴더(`logs/yyyy-MM-dd/`)에 로그를 분리하고, 파일당 10MB 초과 시 분할, 30일치 보관, 총 용량 1GB로 제한한다. 접근 로그는 HTTP 상태 코드에 따라 로그 레벨을 다르게 남긴다(5xx는 ERROR, 4xx는 WARN, 그 외는 INFO). 에러 발생 시에는 스택트레이스 전체를 남긴다.
 
-**서블릿 API**: `SimpleServlet` 인터페이스가 `init` → `service` → `destroy` 생명주기를 정의한다(`init`/`destroy`는 default 메서드라 필요할 때만 구현). `service`로 넘어오는 `ServletRequest`에서 `getMethod()`, `getParameter()`, `getHeader()`(대소문자 무시), `getBody()`(원본 바이트)를 읽고, `ServletResponse.getWriter()`로 응답 바디를 쓴다. `DirectClassServletMapper`가 요청 경로(`/ClassName`)를 그대로 클래스명으로 써서 `Class.forName()`으로 리플렉션 로딩한다. `CurrentTime` 서블릿이 실제 구현 예시.
+**서블릿 API**: `SimpleServlet` 인터페이스가 `init` → `service` → `destroy` 생명주기를 정의한다(`init`/`destroy`는 default 메서드라 필요할 때만 구현). `service`로 넘어오는 `ServletRequest`에서 `getMethod()`, `getParameter()`, `getHeader()`(대소문자 무시), `getBody()`(원본 바이트)를 읽고, `ServletResponse.getWriter()`로 응답 바디를 쓴다. 응답은 문자열 버퍼(`StringWriter`)에 모았다가 UTF-8로 인코딩해 보내므로, 이미지 같은 바이너리 응답은 보낼 수 없고 `setContentType()`에 다른 charset을 적어도 실제 바이트는 UTF-8이다. 상태 코드도 200으로 고정이다(알려진 제한사항 참고). `DirectClassServletMapper`가 요청 경로(`/ClassName`)를 그대로 클래스명으로 써서 `Class.forName()`으로 리플렉션 로딩한다. `CurrentTime` 서블릿이 실제 구현 예시.
 
 - **생명주기**: `init()`은 해당 서블릿으로 첫 요청이 들어올 때 1회(지연 초기화), `service()`는 요청마다, `destroy()`는 graceful shutdown 시 생성에 성공한 서블릿에 대해 1회 호출된다.
-- **싱글톤**: 클래스당 인스턴스 하나를 `ConcurrentHashMap`에 캐시해 재사용한다. `computeIfAbsent`로 동시 첫 요청에서도 생성/`init()`은 한 번만 일어난다. 여러 워커 스레드가 같은 인스턴스의 `service()`를 동시에 호출하므로, 서블릿에 상태 필드를 두면 동기화는 서블릿 구현 측 책임이다.
-- **파라미터**: 쿼리스트링은 메서드와 무관하게 항상 파싱한다. `POST` + `Content-Type: application/x-www-form-urlencoded`이면 바디도 파싱해 합치고, 같은 키가 양쪽에 있으면 쿼리스트링 값이 우선한다(서블릿 스펙, Tomcat 기본 동작과 같음). 바디 디코딩은 `Content-Type`의 `charset`을 따르고 없으면 UTF-8. `%zz`처럼 잘못 인코딩된 쌍은 500 대신 그 쌍만 무시한다. 폼이 아닌 바디의 해석(JSON 파싱 등)은 서블릿 구현의 몫이다.
-- **로딩 순서**: 로딩(`initialize=false`) → `SimpleServlet` 타입 체크 → (서블릿일 때만) 인스턴스 생성 시 클래스 초기화 → `init()`. 서블릿이 아닌 경로는 크기 제한이 있는 실패 캐시에 기록해 다음 요청부터 클래스 탐색을 건너뛴다(트러블슈팅 5, 6번 참고).
+- **싱글톤**: 클래스당 인스턴스 하나를 `ConcurrentHashMap`에 캐시해 재사용한다. `computeIfAbsent`로 동시 첫 요청에서도 생성/`init()`은 한 번만 일어난다. 대신 `init()`이 맵 내부 락을 잡은 채 실행되므로, `init()`이 끝날 때까지 같은 서블릿으로 온 다른 요청은 기다린다. 생성·`init()` 실패는 캐시하지 않아 다음 요청에서 다시 시도한다. 여러 워커 스레드가 같은 인스턴스의 `service()`를 동시에 호출하므로, 서블릿에 상태 필드를 두면 동기화는 서블릿 구현 측 책임이다.
+- **파라미터**: 쿼리스트링은 메서드와 무관하게 항상 파싱한다. `POST` + `Content-Type: application/x-www-form-urlencoded`이면 바디도 파싱해 합치고, 같은 키가 양쪽에 있으면 쿼리스트링 값이 우선한다(서블릿 스펙, Tomcat 기본 동작과 같음). 바디 디코딩은 `Content-Type`의 `charset`을 따르고 없으면 UTF-8. `%zz`처럼 잘못 인코딩된 쌍은 500 대신 그 쌍만 무시한다. 같은 키가 여러 번 오면(`a=1&a=2`) 마지막 값만 남는다(`getParameterValues()` 미지원). 폼이 아닌 바디의 해석(JSON 파싱 등)은 서블릿 구현의 몫이다.
+- **로딩 순서**: 로딩(`initialize=false`) → `SimpleServlet` 타입 체크 → (서블릿일 때만) 인스턴스 생성 시 클래스 초기화 → `init()`. 서블릿이 아닌 경로(클래스 없음, wrong name, `SimpleServlet` 미구현)는 크기 제한이 있는 실패 캐시에 기록해 다음 요청부터 클래스 탐색을 건너뛴다.
 
 **Keep-Alive**: 소켓의 `SO_TIMEOUT`을 `keepAliveTimeoutSeconds`로 설정해서, 이 시간 동안 다음 요청이 안 들어오면 `SocketTimeoutException`을 유도해 커넥션을 정리한다. 별도 타이머 스레드 없이 소켓 자체 타임아웃으로 유휴 커넥션을 회수하는 방식.
 
@@ -114,7 +114,7 @@ flowchart TD
 만들면서 발견하고 고친 것들을 문제 → 원인 → 해결 순으로 정리했다.
 
 **1. `NoClassDefFoundError`가 안 잡혀서 서버가 불안정해질 수 있었던 문제**
-`DirectClassServletMapper`가 서블릿 클래스를 리플렉션으로 로딩할 때 `ReflectiveOperationException`만 캐치하고 있었다. 문제는, 컴파일 시점엔 있었는데 런타임 classpath에서 의존 클래스가 빠진 경우 발생하는 `NoClassDefFoundError`는 `Exception`이 아니라 `Error` 계열이라 그대로 전파돼버린다는 것. 멀티캐치로 `NoClassDefFoundError`도 같이 잡아서 `RuntimeException`으로 감싸고 `Optional.empty()`로 처리되게 고쳤다. 이후 같은 계열인 `ExceptionInInitializerError`도 빠져나간다는 걸 발견해 공통 부모인 `LinkageError`로 범위를 넓혔다(5번 참고). 또 `Optional.empty()`로 처리하면 "서블릿 아님"과 구분되지 않아 정적 파일 처리로 넘어가 404가 나가는 문제가 있어, 지금은 `ServletInitException`으로 구분해 500으로 응답한다.
+`DirectClassServletMapper`가 서블릿 클래스를 리플렉션으로 로딩할 때 `ReflectiveOperationException`만 캐치하고 있었다. 문제는, 컴파일 시점엔 있었는데 런타임 classpath에서 의존 클래스가 빠진 경우 발생하는 `NoClassDefFoundError`는 `Exception`이 아니라 `Error` 계열이라 그대로 전파돼버린다는 것. 멀티캐치로 `NoClassDefFoundError`도 같이 잡아서 `RuntimeException`으로 감싸고 `Optional.empty()`로 처리되게 고쳤다. 이후 같은 계열인 `ExceptionInInitializerError`도 빠져나간다는 걸 발견해 공통 부모인 `LinkageError`로 범위를 넓혔다. 또 `Optional.empty()`로 처리하면 "서블릿 아님"과 구분되지 않아 정적 파일 처리로 넘어가 404가 나가는 문제가 있어, 지금은 `ServletInitException`으로 구분해 500으로 응답한다.
 
 **2. 정적 파일 서빙이 파일 전체를 메모리에 올리고 있던 문제**
 위 "정적 파일 서빙 + ETag" 항목 참고. `Files.readAllBytes()` → 스트리밍 방식으로 교체.
@@ -153,6 +153,7 @@ flowchart TD
 ## 알려진 제한사항
 
 - **FD 한도 정책 부재**: `accept()`가 실패하면 로그만 남기고 재시도한다. 기본 설정(스레드풀 max 200 + 큐 100)은 OS 기본 ulimit(1024) 안에서는 안전하지만, 설정값을 크게 올리면 `ulimit -n`도 같이 올려야 한다.
+- **서블릿 응답 API**: 응답 바디가 문자열(`Writer`)로만 쓰이고 UTF-8로 고정 인코딩되며, 상태 코드는 항상 200이다. 바이너리 응답과 charset·상태 코드 지정을 지원하려면 `getOutputStream()`과 `setStatus()`를 추가하고, `getWriter()`는 `Content-Type`의 charset으로 인코딩해야 한다.
 - **Thread-per-connection 모델**: 커넥션마다 스레드를 하나씩 점유한다(NIO/이벤트 루프는 안 씀). 소규모 트래픽에는 충분하지만 대규모 동시접속에는 스레드 자원 소모가 크다. 실무에서 이런 걸 직접 구현하는 대신 Netty 같은 프레임워크를 쓰는 이유이기도 하다.
 
 ## 서블릿 추가하기
