@@ -6,6 +6,7 @@ import com.example.was.config.VirtualHostConfig;
 import com.example.was.http.HttpMethod;
 import com.example.was.http.HttpRequest;
 import com.example.was.http.HttpStatus;
+import com.example.was.security.BlockedExtensionRule;
 import com.example.was.servlet.ServletInitException;
 import com.example.was.servlet.ServletMapper;
 import com.example.was.servlet.SimpleServlet;
@@ -39,11 +40,13 @@ public class RequestDispatcherMethodTest {
     @Before
     public void setUp() throws IOException {
         Files.writeString(tmp.getRoot().toPath().resolve("index.html"), "<html>index</html>");
+        Files.writeString(tmp.getRoot().toPath().resolve("app.exe"), "binary");
         VirtualHostConfig vhost = new VirtualHostConfig("a.com", tmp.getRoot().getAbsolutePath(), Map.of());
         ServerConfig config = new ServerConfig(8080, 20, 30, 1024 * 1024, List.of(),
                 new ThreadPoolConfig(10, 200, 60, 100), Map.of("a.com", vhost));
         HttpResponseWriter writer = new HttpResponseWriter(20);
-        dispatcher = new RequestDispatcher(config, mapper, new StaticFileHandler(List.of()), writer);
+        StaticFileHandler staticFileHandler = new StaticFileHandler(List.of(new BlockedExtensionRule(List.of(".exe"))));
+        dispatcher = new RequestDispatcher(config, mapper, staticFileHandler, writer);
     }
 
     private static HttpRequest request(String method, String path, String body) {
@@ -78,6 +81,37 @@ public class RequestDispatcherMethodTest {
         assertTrue(res.startsWith("HTTP/1.1 405"));
         assertTrue(res.contains("Allow: GET, HEAD\r\n"));
         assertFalse(res.contains("<html>index</html>"));
+    }
+
+    @Test
+    public void postToMissingPathIs404Not405() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        HttpStatus status = dispatcher.dispatch(out, request("POST", "/missing.html", "x=1"), false);
+
+        assertEquals(HttpStatus.NOT_FOUND, status);
+        assertTrue(out.toString(StandardCharsets.UTF_8).startsWith("HTTP/1.1 404"));
+    }
+
+    @Test
+    public void postToForbiddenPathIs403Not405() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        HttpStatus status = dispatcher.dispatch(out, request("POST", "/app.exe", "x=1"), false);
+
+        assertEquals(HttpStatus.FORBIDDEN, status);
+    }
+
+    @Test
+    public void postWithMatchingEtagIs405Not304() throws IOException {
+        ByteArrayOutputStream getOut = new ByteArrayOutputStream();
+        dispatcher.dispatch(getOut, request("GET", "/index.html", ""), false);
+        String etag = getOut.toString(StandardCharsets.UTF_8).lines()
+                .filter(l -> l.startsWith("ETag: ")).findFirst().orElseThrow().substring("ETag: ".length());
+
+        HttpRequest post = new HttpRequest("POST", "/index.html", "HTTP/1.1",
+                Map.of("Host", "a.com", "If-None-Match", etag), new byte[0]);
+        HttpStatus status = dispatcher.dispatch(new ByteArrayOutputStream(), post, false);
+
+        assertEquals(HttpStatus.METHOD_NOT_ALLOWED, status);
     }
 
     @Test
