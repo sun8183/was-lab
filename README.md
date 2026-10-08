@@ -82,7 +82,7 @@ flowchart TD
 
 **지원 메서드 (GET / HEAD / POST)**: 메서드 이름은 대소문자를 구분한다(`get`은 501).
 
-- **정적 파일**: GET, HEAD만 허용한다. 그 외 메서드는 405와 함께 `Allow: GET, HEAD` 헤더를 보낸다(RFC 9110상 405에는 `Allow`가 필수). 허용 메서드는 `EnumSet` 하나에서 정의해 실제 검사와 `Allow` 헤더 값이 어긋나지 않게 했다.
+- **정적 파일**: GET, HEAD만 허용한다. 처리 순서는 403/404(리소스 확인) → 405(메서드) → 304/200이다. 405는 "리소스는 있지만 메서드를 지원하지 않음"이므로 없는 경로에는 404가 먼저 나가야 하고, 메서드 검사가 ETag 비교보다 앞서야 POST에 304가 나가지 않는다. 그 외 메서드는 405와 함께 `Allow: GET, HEAD` 헤더를 보낸다(RFC 9110상 405에는 `Allow`가 필수). 허용 메서드는 `EnumSet` 하나에서 정의해 실제 검사와 `Allow` 헤더 값이 어긋나지 않게 했다.
 - **HEAD**: GET과 같은 응답에서 바디만 뺀다. `Content-Length`는 GET이었을 때의 값을 그대로 보낸다. HEAD 요청이면 출력 스트림을 `HeadResponseOutputStream`(헤더 끝 `\r\n\r\n` 이후 바이트를 버림)으로 감싸서, 서블릿·에러 페이지 등 어떤 응답 경로에서도 바디가 나가지 않게 했다. keep-alive에서 HEAD 응답에 바디가 섞이면 클라이언트가 그 바이트를 다음 응답으로 읽어 연결이 깨지기 때문이다. 정적 파일은 바디를 버리더라도 파일을 끝까지 읽는 비용이 드므로 아예 헤더만 쓴다.
 - **POST**: 서블릿으로만 처리된다. 폼 데이터는 `getParameter()`로, 그 외 형식(JSON 등)은 `getBody()` 원본 바이트로 받는다.
 
@@ -122,8 +122,10 @@ flowchart TD
 **3. 헤더/바디를 나눠 쓰면서 시스템콜을 두 번 내던 문제**
 소켓 출력 스트림에 헤더 `write()`, 바디 `write()`를 따로 호출하고 있었다. 버퍼링 없이 바로 나가면 패킷/시스템콜이 두 번 발생한다(Nagle 알고리즘이 합쳐줄 수도 있지만 보장된 동작은 아님). 소켓 출력 스트림을 `BufferedOutputStream`으로 감싸서 `flush()` 시점에 한 번에 나가도록 바꿨다.
 
-**4. 개발 환경(Windows)에서만 우연히 통과하던 클래스 로딩**
-`DirectClassServletMapper`는 URL 경로를 그대로 클래스명으로 써서 `Class.forName()`을 호출한다. Java 클래스명은 대소문자를 구분해야 하는데, Windows(NTFS)나 macOS 기본 파일시스템은 대소문자를 구분하지 않다보니 `/hello` 요청이 실제 클래스 `Hello`와 그냥 매칭돼버렸다. 개발 환경에서는 문제없이 동작하다가 Linux(대소문자 구분 파일시스템)에 배포하면 `ClassNotFoundException`이 날 수 있는, 코드가 아니라 환경 차이에서 오는 이슈였다. 코드로 고칠 부분은 아니고, 배포 전에 반드시 Linux 환경에서 실제 요청 경로로 검증해봐야 한다는 걸 확인한 정도.
+**4. 대소문자를 구분하지 않는 파일시스템에서 `/hello`가 500으로 응답하던 문제**
+- 문제: 서블릿 생성 실패를 404 대신 500으로 응답하도록 바꾼 뒤(1번), Windows 개발 환경에서 `/hello`(소문자) 요청이 404가 아닌 500으로 응답했다.
+- 원인: `DirectClassServletMapper`는 URL 경로를 그대로 클래스명으로 써서 `Class.forName()`을 호출한다. Windows(NTFS)나 macOS 기본 파일시스템은 대소문자를 구분하지 않아서, `hello`를 요청하면 클래스 로더가 `Hello.class` 파일을 찾아 읽는다. 하지만 JVM은 파일 안에 기록된 실제 이름(`Hello`)과 요청한 이름(`hello`)을 비교해 `NoClassDefFoundError: Hello (wrong name: hello)`로 거절한다. 즉 매칭되는 게 아니라 에러가 나는데, 예전에는 이 에러가 `Optional.empty()`로 처리돼 404가 나가면서 드러나지 않았다. 500으로 바꾸면서 `LinkageError`인 이 에러가 "서블릿 생성 실패"로 분류된 것이다. Linux(대소문자 구분)에서는 같은 요청이 그냥 `ClassNotFoundException`이 나서, 같은 코드가 OS에 따라 다르게 동작하는 환경 차이 이슈이기도 했다.
+- 해결: 클래스 로딩 단계에서 "wrong name" 메시지가 붙은 `NoClassDefFoundError`는 "그 이름의 클래스 없음"으로 보고 404로 처리한다(실패 캐시에도 기록). 의존 클래스가 빠진 진짜 배포 오류는 메시지가 달라 그대로 500이다. 둘을 구분할 공개 API가 없어 JVM 메시지 형식에 기대는 점은 한계다. 테스트는 Windows(wrong name)와 Linux(ClassNotFoundException) 어느 쪽에서 돌아도 같은 결과(empty)를 확인하도록 작성했다.
 
 **5. URL로 지정한 임의 클래스의 static 초기화가 타입 체크 전에 실행되던 문제**
 - 문제: `Class.forName(className)`은 `Class.forName(className, true, loader)`와 같아서, 로딩과 동시에 클래스 초기화(`static {}` 블록, static 필드 초기화)까지 실행한다. 그런데 `className`은 URL에서 온 외부 입력이고, `SimpleServlet` 타입 체크는 그 다음에 하고 있었다. 즉 클래스패스에 있는 아무 클래스(JDK, Jackson, logback 등)나 URL로 지정해 static 코드를 실행시킬 수 있었다.
