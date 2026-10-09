@@ -87,6 +87,7 @@ flowchart TD
   "port": 8080,
   "keepAliveTimeoutSeconds": 20,
   "shutdownTimeoutSeconds": 30,
+  "maxRequestBodyBytes": 1048576,
   "blockedExtensions": [".exe"],
   "threadPool": { "coreSize": 50, "maxSize": 200, "keepAliveSeconds": 60, "queueSize": 100 },
   "virtualHosts": [
@@ -101,11 +102,36 @@ flowchart TD
 
 ## 구현 상세
 
+### 요청 파싱
+`BufferedInputStream` 하나로 요청 라인·헤더·바디를 모두 바이트 단위로 읽습니다.
+
+- **요청 라인**: 첫 줄을 공백으로 메서드·경로·버전 3개로 나눕니다.
+- **헤더**: 빈 줄이 나올 때까지 `이름: 값` 줄을 읽습니다. 헤더 이름은 대소문자를 구분하지 않으므로(RFC 9110) `TreeMap(String.CASE_INSENSITIVE_ORDER)`에 저장하고, 1바이트가 1문자로 대응하는 `ISO-8859-1`로 디코딩해 원본 바이트를 잃지 않습니다.
+- **바디**: 메서드와 무관하게 `Content-Length` 바이트만큼만 읽습니다. 서블릿이 쓰지 않는 바디도 소켓에 남지 않아, keep-alive 연결의 다음 요청을 오염시키지 않습니다.
+- **크기 제한**: 한 줄 8KB, 헤더 100개, 바디 `maxRequestBodyBytes`. 413은 바디를 읽기 전에 `Content-Length` 값만 보고 거절합니다.
+
+| 상황 | 응답 |
+|---|---|
+| `Content-Length` 상한 초과 | 413 |
+| `Content-Length`가 숫자가 아님 / 음수 / 서로 다른 값으로 중복 | 400 |
+| `Content-Length`와 `Transfer-Encoding` 동시 존재 | 400 |
+| `Transfer-Encoding`(chunked 등) | 501 (미지원) |
+| 요청 라인 형식 오류, 줄 길이/헤더 개수 초과, 콜론 없는 헤더 줄 | 400 |
+
+파싱에 실패하면 요청 경계를 더 이상 신뢰할 수 없으므로 응답 후 연결을 닫습니다.
+
+### 메서드 처리
+메서드 이름은 대소문자를 구분합니다(`get`은 501).
+
+- **GET / HEAD**: 정적 파일과 서블릿을 모두 조회합니다. 정적 파일에 그 외 메서드가 오면 405와 `Allow: GET, HEAD`를 보냅니다.
+- **HEAD**: GET과 같은 응답에서 바디만 뺍니다. 출력 스트림을 `HeadResponseOutputStream`으로 감싸 서블릿·에러 페이지 등 어떤 경로에서도 바디가 나가지 않게 했습니다.
+- **POST**: 서블릿으로만 처리합니다. `application/x-www-form-urlencoded` 폼은 `getParameter()`로 읽고, JSON 등 그 외 형식은 `getBody()`로 원본 바이트를 넘겨 서블릿이 해석합니다.
+
 ### 가상호스트 매칭
-Host 헤더 문자열을 키로 `Map`에서 조회합니다(O(1)). 매칭되는 호스트가 없으면 설정 파일 순서상 첫 번째 가상호스트로 폴백하며, 이 순서를 보장하기 위해 내부적으로 `LinkedHashMap`을 사용합니다.
+Host 헤더에서 포트(`:8080`)를 떼고 소문자로 바꾼 문자열을 키로 `Map`에서 조회합니다(O(1)). 매칭되는 호스트가 없으면 설정 파일 순서상 첫 번째 가상호스트로 폴백하며, 이 순서를 보장하기 위해 내부적으로 `LinkedHashMap`을 사용합니다.
 
 ### 에러 페이지
-403/404/500 상황에서 vhost 설정에 지정된 HTML 파일을 읽어 응답 바디로 내려줍니다. vhost별로 다른 에러 페이지를 지정할 수 있습니다.
+403/404/500 상황에서 vhost 설정에 지정된 HTML 파일을 읽어 응답 바디로 내려줍니다. vhost별로 다른 에러 페이지를 지정할 수 있습니다. 지정한 파일이 없거나 경로가 `httpRoot`를 벗어나면 상태 코드 텍스트(`text/plain`)로 응답합니다.
 
 ### 보안 규칙
 - **확장자 차단**: 파일명에서 확장자만 잘라 `Set.contains()`로 조회합니다.
@@ -120,6 +146,12 @@ Host 헤더 문자열을 키로 `Map`에서 조회합니다(O(1)). 매칭되는 
 ### 서블릿 API
 `SimpleServlet` 인터페이스가 `init` → `service` → `destroy` 생명주기를 정의합니다(`init`/`destroy`는 default 메서드라 필요할 때만 구현). `service`로 넘어오는 `ServletRequest`에서 `getParameter()`, `getHeader()`, `getBody()`로 요청을 읽고, `ServletResponse.getWriter()`로 응답 바디를 씁니다. `DirectClassServletMapper`가 요청 경로(`/ClassName`)를 그대로 클래스명으로 사용해 `Class.forName()`으로 리플렉션 로딩합니다. 구현 예시는 `CurrentTime` 서블릿을 참고해 주세요.
 
+### 서블릿 로딩
+- **안전한 로딩**: `Class.forName(className, false, loader)`로 로딩만 하고, `SimpleServlet` 타입 체크를 통과한 클래스만 인스턴스 생성 시점에 초기화합니다. 클래스명은 URL에서 온 외부 입력이므로, 서블릿이 아닌 임의 클래스의 static 초기화 코드가 실행되지 않게 했습니다.
+- **생명주기**: 첫 요청이 올 때 `init()`을 1회 호출하는 지연 초기화입니다. `ConcurrentHashMap.computeIfAbsent`로 동시 첫 요청에서도 클래스당 인스턴스 하나만 만들고, graceful shutdown 시 생성에 성공한 서블릿의 `destroy()`를 호출합니다.
+- **실패 캐시**: 서블릿이 아닌 경로(클래스 없음, `SimpleServlet` 미구현)를 최대 1,000개까지 캐시해, 정적 파일 요청마다 클래스패스를 탐색하지 않게 했습니다. 상한을 둔 이유는 랜덤 경로 요청으로 메모리가 무한히 늘어나는 것을 막기 위해서입니다.
+- **404 / 500 구분**: 서블릿이 아니면 정적 파일 처리로 넘어가고(없으면 404), 서블릿인데 생성·`init()`에 실패하면 `ServletInitException`으로 500을 응답합니다. 로딩 중 나는 `NoClassDefFoundError` 같은 `LinkageError`도 잡아 처리합니다.
+
 ### Keep-Alive
 소켓의 `SO_TIMEOUT`을 `keepAliveTimeoutSeconds`로 설정해, 이 시간 안에 다음 요청이 없으면 `SocketTimeoutException`으로 커넥션을 정리합니다. 별도 타이머 스레드 없이 소켓 자체 타임아웃으로 유휴 커넥션을 회수합니다.
 
@@ -127,7 +159,11 @@ Host 헤더 문자열을 키로 `Map`에서 조회합니다(O(1)). 매칭되는 
 `Content-Length`는 `Files.size()`로 미리 구하고, 바디는 `Files.newInputStream()` + `InputStream.transferTo()`로 8KB 버퍼 단위 스트리밍합니다. 힙 사용량이 파일 크기와 무관하게 일정합니다. ETag는 파일의 최종 수정 시각과 크기를 조합해(`"<lastModified hex>-<size hex>"`) 만들며, 요청의 `If-None-Match`가 일치하면 바디 없이 304만 응답합니다. 
 
 ### 스레드풀 설정화
-`coreSize` / `maxSize` / `queueSize`를 설정 파일로 분리했습니다. 큐까지 가득 찬 상태에서 새 연결이 오면 스레드를 잡지 않고 바로 503을 내려, 무한정 연결을 받다가 서버가 죽는 상황을 막습니다.
+`coreSize` / `maxSize` / `queueSize`를 설정 파일로 분리했습니다.
+
+- **포화 거절**: 거절 정책은 `AbortPolicy`입니다. 큐까지 가득 찬 상태에서 새 연결이 오면 `execute()`가 던지는 `RejectedExecutionException`을 accept 스레드가 받아 바로 503을 내려, 무한정 연결을 받다가 서버가 죽는 상황을 막습니다.
+- **증설 스레드 회수**: core를 넘어 늘어난 스레드는 `keepAliveSeconds`(60초) 동안 일이 없으면 회수됩니다.
+- **크기 판단 근거**: 최악의 경우 동시에 처리 중인 요청 바디가 모두 힙에 올라옵니다(max 200 × `maxRequestBodyBytes` 1MB = 200MB). 이 값이 힙 안에 들어오는지를 기준으로 설정했습니다.
 
 ### Graceful shutdown
 1. 종료 신호가 오면 신규 연결은 즉시 503으로 거절합니다.
